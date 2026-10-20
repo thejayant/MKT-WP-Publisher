@@ -47,6 +47,20 @@ function plainUrl(site, endpoint) {
   return site.site_url + '/?rest_route=' + encodeURIComponent('/wp/v2' + routePath).replace(/%2F/g, '/') + (query ? '&' + query : '');
 }
 
+/**
+ * The low-level reason a fetch failed (DNS, connect, TLS, redirect…), from the error's cause chain.
+ * fetch's own message is just "fetch failed"; the cause holds the code. Request headers, and so credentials,
+ * never appear in these messages.
+ */
+function describeCause(error) {
+  const parts = [];
+  for (let e = error?.cause ?? error, depth = 0; e && depth < 4; e = e.cause, depth++) {
+    const nested = Array.isArray(e.errors) ? ' [' + e.errors.map(x => [x.code, x.address].filter(Boolean).join(' ')).join(', ') + ']' : '';
+    parts.push([e.code, e.message].filter(Boolean).join(' ') + nested);
+  }
+  return parts.join(' <- ').replace(/\s+/g, ' ').slice(0, 300) || 'unknown error';
+}
+
 function httpError(status, data) {
   const code = typeof data?.code === 'string' ? data.code.replace(/[^a-zA-Z0-9_-]/g, '') : 'error';
   // WordPress's own message, HTML stripped and capped so a verbose page cannot flood the reply.
@@ -88,7 +102,11 @@ function createClient(fetcher, {timeouts = {}, sleep = abortableSleep, log = nul
       const controller = new AbortController();
       const abort = () => controller.abort();
       signal?.addEventListener('abort', abort, {once: true});
-      const timeout = setTimeout(abort, timeoutMs);
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        abort();
+      }, timeoutMs);
       const started = Date.now();
       try {
         let response;
@@ -100,10 +118,12 @@ function createClient(fetcher, {timeouts = {}, sleep = abortableSleep, log = nul
             headers: {Authorization: site.auth, ...(isJsonBody ? {'Content-Type': 'application/json'} : {}), ...headers},
             body: body === undefined ? undefined : isJsonBody ? JSON.stringify(body) : body,
           });
-        } catch {
+        } catch (error) {
           checkCancelled(signal);
-          log?.(site.site_id + ' ' + method + ' ' + endpoint.split('?')[0] + ' failed after ' + (Date.now() - started) + 'ms');
-          throw new Error('Network request failed or timed out. For a write, check the selected WordPress site before retrying; it may have succeeded. Check its canonical HTTPS URL.');
+          const elapsed = Date.now() - started;
+          const reason = timedOut ? 'timed out after ' + Math.round(timeoutMs / 1000) + ' s with no response' : 'failed after ' + elapsed + ' ms: ' + describeCause(error);
+          log?.(site.site_id + ' ' + method + ' ' + endpoint.split('?')[0] + ' ' + reason);
+          throw new Error('Network request ' + reason + ' [Node ' + process.version + ']. For a write, check the selected WordPress site before retrying; it may have succeeded. Check its canonical HTTPS URL.');
         }
         let data;
         let parsed = true;

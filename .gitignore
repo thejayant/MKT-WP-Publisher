@@ -5,3 +5,4 @@ node_modules/
 sites.json
 .env
 .env.*
+*.bak

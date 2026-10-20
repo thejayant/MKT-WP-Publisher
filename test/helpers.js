@@ -7,7 +7,7 @@ const sites=[{id:'site-a',label:'Website A',site_url:'https://a.example',usernam
 const env={WP_SITES_JSON:JSON.stringify(sites)};
 function mock(values){const calls=[];return {calls,f:async(u,o)=>{calls.push({u,o});const v=values.shift();if(v instanceof Error)throw v;return {ok:true,json:async()=>v};}};}
 async function runChild(messages,bootstrap=''){
- const entry=path.join(__dirname,'../server/index.js');const child=spawn(process.execPath,['-e',bootstrap+';require('+JSON.stringify(entry)+')'],{env:{PATH:process.env.PATH},stdio:['pipe','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);
+ const entry=path.join(__dirname,'../server/index.js');const child=spawn(process.execPath,['-e',bootstrap+';require('+JSON.stringify(entry)+')'],{env:{PATH:process.env.PATH,MKT_WP_FETCH:'global'},stdio:['pipe','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);
  const done=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve);});child.stdin.end(messages.map(x=>typeof x==='string'?x:JSON.stringify(x)).join('\n')+'\n');assert.equal(await done,0,err);assert.equal(err,'');return out.trim().split('\n').filter(Boolean).map(x=>JSON.parse(x));
 }
 function slot(n,dir,overrides={}) {

@@ -8,3 +8,4 @@ scripts/
 .gitignore
 .gitattributes
 .github/
+*.bak

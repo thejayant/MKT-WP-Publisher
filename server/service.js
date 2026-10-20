@@ -5,6 +5,7 @@ const {VERSION, MAX_SITES} = require('./constants.js');
 const {tools, validate} = require('./schema.js');
 const {readSites} = require('./config.js');
 const {createClient, checkCancelled} = require('./wp-client.js');
+const {createHttpsFetch} = require('./https-fetch.js');
 const {serve} = require('./rpc.js');
 
 const handlers = {
@@ -57,7 +58,10 @@ function makeService(env = process.env, fetcher = global.fetch, options = {}) {
 }
 
 function start() {
-  serve(makeService());
+  // Real requests use node:https with an explicit trust list instead of the host runtime's fetch (see https-fetch.js).
+  // MKT_WP_FETCH=global keeps global fetch; the child-process tests use it to mock the network.
+  const fetcher = process.env.MKT_WP_FETCH === 'global' ? global.fetch : createHttpsFetch();
+  serve(makeService(process.env, fetcher));
 }
 
 module.exports = {makeService, tools, start, VERSION};
