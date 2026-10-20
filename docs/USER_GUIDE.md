@@ -1,4 +1,4 @@
-# MKT WP Publisher 1.3.0 — User Guide
+# MKT WP Publisher 1.4.0 — User Guide
 
 Developed by Jayant.
 
@@ -6,7 +6,7 @@ Configure up to five WordPress websites using ordinary extension fields. Each we
 
 ## Install and configure
 
-Install mkt-wp-publisher-1.3.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
+Install mkt-wp-publisher-1.4.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
 
 Open the extension settings and fill the labeled Website 1 group:
 
@@ -23,7 +23,7 @@ To add another website, fill and enable Website 2. Repeat for Website 3, 4, and 
 
 These are labeled field groups in the native settings, not custom collapsible panels. All five groups may be visible. The documented MCPB settings format supports fields, checkboxes, and folder pickers; it does not provide a dynamic Add Website button or conditional section rendering. The host controls their presentation. [MCPB settings specification](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md).
 
-Reload/restart the extension after saving settings. Verify version 1.3.0 and fourteen tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
+Reload/restart the extension after saving settings. Verify version 1.4.0 and fourteen tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
 
 ## Separate blog image folders
 
@@ -37,7 +37,9 @@ Website 3 -> C:\BlogImages\ClientThree
 
 Create the directories first, then select each one using its website's folder picker. Every enabled website group requires its own folder setting. Uploads use that selected website's directory and do not fall back to the old shared folder. The same filename can refer to different images in different folders. If you intentionally select the same directory for two sites, they share those files; choose different directories for separate collections.
 
-Use filenames only, such as garage.png. Subdirectories, traversal, and external file symlinks are rejected. PNG, JPEG, and WebP are supported up to 20 MiB. Uploading an image does not insert it into article HTML; use its returned URL or attach its media ID as featured_media.
+Use filenames only, such as garage.png. Subdirectories, traversal, and external file symlinks are rejected. PNG, JPEG, WebP, GIF and AVIF are supported up to 20 MiB (AVIF needs WordPress 6.5 or later). The file content must match its extension, so a JPEG renamed to .png is refused; list_images flags such files. Uploading returns a ready-to-paste html figure for the article, and featured_for_post_id sets the image as a draft's featured image in the same step:
+
+> Upload hero.png from website-1's image folder with alt text "Team at the spring launch" and make it the featured image of draft POST_ID. Do not publish.
 
 ## Publishing as different authors
 
@@ -178,22 +180,24 @@ publish_post refuses a draft whose date is in the future, because WordPress woul
 
 In Claude Desktop, never set publish_post or schedule_post (or the extension as a whole) to always allow. The per-call approval prompt is the only real human check before a post goes live. Allowing create_term, create_draft, update_draft, upload_image, and the read tools without prompts is fine.
 
-Tool calls run one at a time. initialize, ping, and tools/list are answered immediately, even while a slow upload is running.
+Calls to the same website run one at a time; different websites are handled in parallel, so a slow upload to one site does not hold up another. initialize, ping, and tools/list are answered immediately.
 
-Avoid concurrent editors/workers. Status reads and writes are separate, and an external editor can publish/change content between them. Duplicate checks are not atomic; there is no durable job ledger.
+Avoid concurrent editors/workers. Status reads and writes are separate, and an external editor can publish/change content between them. To guard against that, Claude can pass expected_modified_gmt (from get_post) to update_draft, publish_post and schedule_post; if the post changed in WordPress since it was read, nothing is written. Duplicate checks are not atomic; there is no durable job ledger.
 
-Cancelled queued work is skipped. Active requests receive an abort signal and later steps stop once cancellation is observed. Cancellation cannot undo a committed WordPress write. Each HTTP request, including response reading, has a 60-second timeout; a multi-step tool can take longer overall.
+Cancelled queued work is skipped. Active requests receive an abort signal and later steps stop once cancellation is observed. Cancellation cannot undo a committed WordPress write. Each HTTP request, including response reading, has a 60-second timeout (180 seconds for image uploads); a multi-step tool can take longer overall. Reads that hit a busy server (HTTP 429, 502, 503, 504) are retried up to twice; writes are never retried automatically.
 
 After a timeout, cancellation, or unreadable write response, inspect the selected website before retrying. Uploads can remain if later steps fail. Errors include site/media IDs when available; metadata repair still requires WordPress admin.
 
-The extension uses local stdio and outbound HTTPS with redirect rejection. No network listener, tunnel, AI API key, or npm runtime dependency is needed. The host handles sensitive password storage; credentials reach the local process through environment variables. The computer must be awake for calls.
+The extension uses local stdio and outbound HTTPS with redirect rejection (plain http only for local development sites such as localhost, *.local or *.test). No network listener, tunnel, AI API key, or npm runtime dependency is needed. The host handles sensitive password storage; credentials reach the local process through environment variables. The computer must be awake for calls.
 
-Custom post types, image generation, custom fields other than SEO, unscheduling and deletion tools are not included. Categories and tags can be created with create_term.
+Custom post types, image generation or resizing, uploads from a URL, custom fields other than SEO, unscheduling and deletion tools are not included. Categories and tags can be created with create_term.
 
 ## Validation and troubleshooting
 
-Run npm test from the unpacked source. Mocked tests cover routing, credentials, five-site limits, enabled/disabled groups, required folders, duplicate IDs/slugs, different image contents with identical filenames, cross-folder exclusion, cancellation, and startup. Symlink tests explicitly skip when the host denies symlink creation; traversal tests still run.
+Run npm test from the source folder. Mocked tests cover routing, credentials, five-site limits, enabled/disabled groups, required folders, duplicate IDs/slugs, image content checks, cross-folder exclusion, retries, cancellation, and startup. Symlink tests explicitly skip when the host denies symlink creation; traversal tests still run. npm run test:live runs an optional round trip against a staging site (see docs/DEVELOPMENT.md).
 
-Locally tested on Node v22.22.0 / Windows. Claude Desktop installation/settings rendering, live website permissions, and other platforms remain unverified. No actual WordPress requests or website writes were made during development.
+Locally tested on Node v25.1.0 / Windows. Claude Desktop installation/settings rendering, live website permissions, and other platforms remain unverified. No actual WordPress requests or website writes were made during development.
 
-No tools: reload the extension and inspect developer logs. Missing site_id: list_sites first. Unset optional settings that reach the server as literal ${user_config.…} placeholders are treated as empty. Missing image: verify the selected site's folder and filename. HTTP 401/403: check that site's credentials, role, and security rules. Redirect failure: configure its canonical HTTPS installation URL without /wp-admin or /wp-json.
+Debug log: turn on Advanced | Debug log in the extension settings, restart the extension, and repeat the failing request. Each WordPress request then adds one line (site, method, path, HTTP status, time) to the extension's log in Claude Desktop's developer settings. Passwords, search text and content are never logged. Turn it off again afterwards.
+
+No tools: reload the extension and inspect developer logs. Missing site_id: list_sites first. Unset optional settings that reach the server as literal ${user_config.…} placeholders are treated as empty. Missing image: verify the selected site's folder and filename. HTTP 401/403: check that site's credentials, role, and security rules. Redirect failure: configure its canonical HTTPS installation URL without /wp-admin or /wp-json. Local development site: http:// is accepted for localhost, *.local, *.test and *.localhost addresses only.

@@ -1,5 +1,28 @@
 # Changelog
 
+## MKT WP Publisher 1.4.0
+
+The rest of the docs/IMPROVEMENTS.md backlog (B9, B10, F8, F10, F13–F17, H1–H7, H9).
+
+Behaviour:
+- upload_image returns a ready-to-paste `html` figure. With `featured_for_post_id` (and `post_type` for pages) it also sets the image as that draft's featured image; the draft is checked before anything is uploaded.
+- Image content is checked against the file extension before upload, and list_images flags mismatches. GIF and AVIF are now supported (AVIF needs WordPress 6.5+).
+- update_draft checks a changed slug against other posts, and warns if WordPress saves a different slug.
+- update_draft, publish_post and schedule_post accept `expected_modified_gmt`: if the post changed in WordPress since it was read, nothing is written.
+- Reads (GET/OPTIONS) are retried up to twice on 429/502/503/504, honouring Retry-After up to 10 s. Writes are never retried.
+- Uploads get a 180 s timeout; other requests keep 60 s.
+- Requests are queued per site: calls to one site stay in order, while a slow upload no longer blocks other sites.
+- Plain `http://` URLs are accepted for local development sites only (localhost, 127.0.0.1, *.local, *.test, *.localhost).
+- Every tool declares an `outputSchema`, and successful results include `structuredContent` (MCP 2025-06-18) next to the text copy.
+- New setting, Advanced | Debug log: one line per WordPress request (site, method, path, status, time) in the extension log. Never includes passwords, query text or content.
+
+Project:
+- The server is split into readable modules (server/config.js, schema.js, wp-client.js, rpc.js, tools/*.js); the tests are split by area.
+- Git repository with .gitignore/.gitattributes; GitHub Actions CI (Node 18/20/22 on Linux, Windows, macOS; PHP lint).
+- npm run lint, npm run pack (builds the .mcpb and the SEO Bridge zip), npm run test:live (opt-in staging test).
+
+Tool-call migration: none. New arguments are optional. Image files whose content doesn't match their extension are now refused.
+
 ## MKT WP Publisher 1.3.0
 
 Marketing features from docs/IMPROVEMENTS.md (F3, F6, F7, F12).

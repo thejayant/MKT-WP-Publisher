@@ -1,6 +1,6 @@
 # Tools Reference
 
-All tools return a single text content block containing JSON. Errors come back as `isError: true` with a plain-text message.
+A successful call returns the result twice: as JSON text in a text content block, and as `structuredContent` (MCP 2025-06-18). Every tool declares an `outputSchema` for it. Errors come back as `isError: true` with a plain-text message and no `structuredContent`.
 
 Every tool except `list_sites` requires `site_id` (pattern `^[a-z0-9]+(?:-[a-z0-9]+)*$`) and returns:
 
@@ -15,6 +15,10 @@ Unknown arguments are always rejected.
 **Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only `publish_post` and `schedule_post` are `destructiveHint: true`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
 
 **Plain permalinks:** if `/wp-json/...` returns WordPress's HTML 404 page, the server retries that request once as `/?rest_route=/wp/v2/...`. It keeps using that form for the site until the extension restarts. The retry is safe for writes, because an unrouted 404 means WordPress processed nothing.
+
+**Retries and timeouts:** reads (`GET`, `OPTIONS`) that get 429, 502, 503 or 504 are retried up to twice, after 1 s and 3 s, or after the `Retry-After` header (capped at 10 s). Writes are never retried. Each request times out after 60 s; image uploads after 180 s.
+
+**Concurrency guard:** `update_draft`, `publish_post` and `schedule_post` accept `expected_modified_gmt`, the `modified_gmt` value from `get_post` or `list_posts`. If the post was changed in WordPress since then, the call fails and nothing is written. A trailing `Z` or `+00:00` is ignored when comparing.
 
 ---
 
@@ -59,7 +63,7 @@ Read-only. Reads the site's local image folder; no network calls.
 
 **Returns `data`:** `{ image_folder, items: [{ file_name, type, size_bytes, modified, uploadable?, reason? }], total, truncated }`
 
-Lists only `.png`, `.jpg`, `.jpeg` and `.webp` files that sit directly in the folder (no subfolders, no symlinks pointing outside), sorted by name, at most 500. Files over 20 MB are listed with `uploadable: false`. Pass a `file_name` to `upload_image`.
+Lists only `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` and `.avif` files that sit directly in the folder (no subfolders, no symlinks pointing outside), sorted by name, at most 500. Files that can't be uploaded are listed with `uploadable: false` and a `reason`: `over 20 MB`, or `content does not match the file extension` (checked from the first bytes). Pass a `file_name` to `upload_image`.
 
 ## list_posts
 Read-only. `GET /posts?context=edit&orderby=modified&order=desc`, 50 per page.
@@ -90,12 +94,19 @@ Write.
 | `file_name` | string, required | Bare filename inside this site's image folder |
 | `alt_text` | string, required | not blank |
 | `title` | string | Defaults to the sanitised filename without extension |
+| `featured_for_post_id` | integer ≥ 1 | Also set the image as this draft's featured image |
+| `post_type` | `post` \| `page` | For `featured_for_post_id`; default `post` |
 
-**Returns `data`:** `{ media_id, url, alt_text }`
+**Returns `data`:** `{ media_id, url, alt_text, html, featured_for_post_id? }`. `html` is a ready-to-paste `<figure class="wp-block-image"><img … class="wp-image-ID" /></figure>`.
 
-**Rules:** `.png`, `.jpg`, `.jpeg`, `.webp`; ≤ 20 MB; no subfolders, `..` or symlinks out of the folder. Uploading does **not** insert the image into the post. Use `featured_media` or put `url` into the content.
+**Rules:**
+- Types: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.avif` (AVIF needs WordPress 6.5+). The file's content must match its extension, so a renamed file is refused before anything is sent.
+- At most 20 MB. No subfolders, `..` or symlinks out of the folder.
+- With `featured_for_post_id`, the target must be a draft or pending post/page. It's checked **before** uploading.
 
-**Partial failure:** if the metadata step fails, the error gives the `media_id` that already exists. Don't upload it again.
+**Partial failure:** if the metadata or featured-image step fails, the error gives the `media_id` that already exists. Don't upload it again; use `update_draft` with `featured_media` instead.
+
+Uploading from a URL is deliberately not supported: the server only sends files from the folder you chose.
 
 ## create_term
 Write.
@@ -139,7 +150,9 @@ Status is always `draft`. Fails if the slug already exists for that post type in
 ## update_draft
 Write. Only for `draft` or `pending` posts.
 
-Args: `post_id` (required), `post_type` (the same one the item was created with), plus at least one `create_draft` field. `content_format` needs `content`. Calling it with no field to change is an error and sends nothing. `featured_media: 0` removes the featured image.
+Args: `post_id` (required), `post_type` (the same one the item was created with), optional `expected_modified_gmt`, plus at least one `create_draft` field. `content_format` needs `content`. Calling it with no field to change is an error and sends nothing. `featured_media: 0` removes the featured image.
+
+A new `slug` is checked against the other posts of that type first, and taken slugs are refused. If WordPress still saves a different slug, the summary includes a `warning`.
 
 **Returns `data`:** post summary.
 
@@ -152,6 +165,7 @@ Write. **Use only after the user explicitly approves this site and this post.**
 | `post_id` | integer ≥ 1, required | |
 | `confirm_title` | string, required | Must match the current title (whitespace-normalised) |
 | `confirm_publish` | `true`, required | |
+| `expected_modified_gmt` | string | optional concurrency guard |
 
 **Behaviour:**
 - Title mismatch → error, nothing changes.
@@ -170,6 +184,7 @@ Write. **Use only after the user explicitly approves this site, this post and th
 | `publish_at` | string, required | ISO 8601 with a timezone: `2026-11-02T09:00:00+05:30` or `2026-11-02T03:30:00Z` |
 | `confirm_title` | string, required | Must match the current title (whitespace-normalised) |
 | `confirm_schedule` | `true`, required | |
+| `expected_modified_gmt` | string | optional concurrency guard |
 
 **Behaviour:**
 - The time must be at least 2 minutes and at most 2 years ahead. A time without a timezone is refused, so nothing depends on the site's timezone setting.
@@ -222,4 +237,8 @@ With `content_format: 'markdown'`, `content` is converted to HTML locally before
 | `… neither Yoast SEO nor Rank Math is active` | Activate one of them. Nothing was saved. |
 | `… applies to posts only` / `parent applies to pages only` | Wrong field for this `post_type`. |
 | `publish_at must …` | Use ISO 8601 with a timezone, between 2 minutes and 2 years ahead. |
+| `… changed since you read it` | Someone edited the post in WordPress. Read it again with `get_post` and check with the user. Nothing was written. |
+| `The content of X is …, but its extension says …` | The file was renamed or exported wrongly. Re-export it. Nothing was uploaded. |
+| `Slug already exists … Choose another slug.` | `update_draft` was given a slug another post uses. |
+| `… use the canonical HTTPS website URL …` | Fix the site URL in settings. `http://` works only for local development hosts. |
 | `Request cancelled` | Check the site; an earlier step may already have been saved. |
