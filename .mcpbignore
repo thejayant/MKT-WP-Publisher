@@ -3,3 +3,8 @@ docs/
 *.mcpb
 *.zip
 wordpress-plugin/
+scripts/
+.git/
+.gitignore
+.gitattributes
+.github/
