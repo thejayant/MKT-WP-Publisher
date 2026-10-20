@@ -400,5 +400,10 @@
       "src": "assets/icon.png",
       "size": "512x512"
     }
-  ]
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thejayant/MKT-WP-Publisher.git"
+  }
 }

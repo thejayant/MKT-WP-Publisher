@@ -90,3 +90,7 @@ No npm dependencies. Node 18+ is all you need.
 | `npm run test:live` | Optional round trip against a **staging** site (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)) |
 
 The server code is in [server/](server/), with [server/service.js](server/service.js) as the entry module. The WordPress companion plugin is in [wordpress-plugin/](wordpress-plugin/). CI runs on GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
+## License
+
+MIT. See [LICENSE](LICENSE). The WordPress plugin in `wordpress-plugin/` is GPL-2.0-or-later, as WordPress plugins usually are.

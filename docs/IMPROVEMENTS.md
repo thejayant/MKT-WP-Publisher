@@ -8,7 +8,7 @@ The original review found strong safety rails (no implicit site, draft-first pub
 
 | # | Item | Notes |
 | --- | --- | --- |
-| H8 | **LICENSE and `repository` fields** | Needs a decision from the owner: which license (e.g. proprietary/internal, MIT), and where the repository will live. |
+| H8 | ✅ **LICENSE and `repository` fields** | MIT (LICENSE from the GitHub repo); `license` and `repository` set in package.json and manifest.json. The SEO Bridge plugin stays GPL-2.0-or-later, as WordPress plugins usually are. |
 | F7b | **Custom post types** (beyond posts and pages) | `post_type` is limited to `post`/`page`. CPTs need their REST base and taxonomy rules per site. |
 | F12b | **Native block markup** for Markdown | Markdown becomes HTML (a Classic block, one click to convert). Native blocks risk editor validation warnings across WordPress versions. |
 | F14b | **Image resize/compress** | Would need an image library (a dependency). WordPress already creates resized copies on upload. |
@@ -68,5 +68,5 @@ The original review found strong safety rails (no implicit site, draft-first pub
 | H5 | Split the test file | ✅ 1.4.0: by area (older bodies not reformatted, see H5b) |
 | H6 | Live integration test | ✅ 1.4.0: `npm run test:live` |
 | H7 | Lint | ✅ 1.4.0: dependency-free `npm run lint` (ESLint still open, see H7b) |
-| H8 | LICENSE and `repository` | Open, needs an owner decision |
+| H8 | LICENSE and `repository` | ✅ MIT, github.com/thejayant/MKT-WP-Publisher |
 | H9 | Debug log | ✅ 1.4.0: Advanced → Debug log setting |
