@@ -8,7 +8,7 @@ Editing beyond drafts, back-dating and unpublishing.
 - New unpublish_post: move a published, private, scheduled or pending post or page back to draft. This also unschedules a scheduled post. Needs confirm_title and confirm_unpublish:true.
 - update_draft now also edits scheduled (future) posts. They keep their publish time; a warning is shown if WordPress changes the status.
 - publish_post accepts an optional publish_date (now or in the past) to back-date a post. It also publishes now a draft that carries a future date.
-- Fix (from 1.4.0 testing): sites on Let's Encrypt's ECDSA chain (YE1 → Root YE → ISRG Root X2) failed with CERT_HAS_EXPIRED inside Claude Desktop when Windows has an expired ISRG Root X2 cross-certificate. Requests now use node:https and trust Node's bundled roots plus the Windows store. Network errors show the real cause (e.g. CERT_HAS_EXPIRED, ENOTFOUND) and the Node version.
+- Fix (from 1.4.0 testing): sites on Let's Encrypt's ECDSA chain (YE1 → Root YE → ISRG Root X2) failed with CERT_HAS_EXPIRED inside Claude Desktop when Windows has an expired ISRG Root X2 cross-certificate. Requests now use node:https and trust Node's bundled roots plus the Windows store. Network errors show the real cause (e.g. CERT_HAS_EXPIRED, ENOTFOUND) and the Node version. A regression test starts the real server with a failing global fetch and checks it still connects.
 - Tools: 16 (was 14).
 
 Tool-call migration: update_draft on a published post still fails, now pointing to edit_published_post.

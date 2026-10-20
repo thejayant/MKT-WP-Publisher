@@ -58,3 +58,33 @@ test('F16: tool results carry structuredContent matching an outputSchema; errors
   assert.equal(failed.isError, true);
   assert(!('structuredContent' in failed));
 });
+
+test('regression (mktwptest.wasmer.app CERT_HAS_EXPIRED): the real server does not use the host runtime\'s global fetch', async () => {
+  // Claude Desktop replaces global fetch with a wrapper that trusts only the Windows store, which broke sites on
+  // Let's Encrypt's ECDSA chain. The server must use its own node:https transport (server/https-fetch.js) instead.
+  const http = require('node:http');
+  const {spawn} = require('node:child_process');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, {'Content-Type': 'application/json'});
+    res.end(JSON.stringify({id: 42, name: 'Local', slug: 'local', roles: ['administrator'], capabilities: {}}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const siteUrl = 'http://127.0.0.1:' + server.address().port;
+    const profiles = JSON.stringify([{id: 'local', site_url: siteUrl, username: 'u', application_password: 'p'}]);
+    // A broken global fetch, like the runtime's wrapper rejecting the certificate chain.
+    const boot = 'global.fetch=async()=>{throw Object.assign(new TypeError("fetch failed"),{cause:Object.assign(new Error("certificate has expired"),{code:"CERT_HAS_EXPIRED"})})}';
+    const entry = path.join(__dirname, '../server/index.js');
+    const child = spawn(process.execPath, ['-e', boot + ';require(' + JSON.stringify(entry) + ')'], {env: {PATH: process.env.PATH, WP_SITES_JSON: profiles}, stdio: ['pipe', 'pipe', 'pipe']});
+    let out = '';
+    child.stdout.on('data', x => { out += x; });
+    const done = new Promise(resolve => child.on('exit', resolve));
+    child.stdin.end(JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'test_connection', arguments: {site_id: 'local'}}}) + '\n');
+    await done;
+    const reply = JSON.parse(out.trim().split('\n').pop());
+    assert.equal(reply.result.isError, undefined, reply.result.content?.[0]?.text);
+    assert.equal(reply.result.structuredContent.data.user_id, 42);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
