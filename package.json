@@ -5,7 +5,10 @@
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "main": "server/index.js",
   "scripts": {
-    "test": "node scripts/test.js"
+    "test": "node scripts/test.js",
+    "lint": "node scripts/lint.js",
+    "pack": "node scripts/pack.js",
+    "test:live": "node --test test/live/wordpress.live.js"
   },
   "engines": {
     "node": ">=18"
