@@ -1,4 +1,4 @@
-# MKT WP Publisher 1.5.0 — User Guide
+# MKT WP Publisher 1.6.0 — User Guide
 
 Developed by Jayant.
 
@@ -6,7 +6,7 @@ Configure up to five WordPress websites using ordinary extension fields. Each we
 
 ## Install and configure
 
-Install mkt-wp-publisher-1.5.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
+Install mkt-wp-publisher-1.6.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
 
 Open the extension settings and fill the labeled Website 1 group:
 
@@ -23,7 +23,7 @@ To add another website, fill and enable Website 2. Repeat for Website 3, 4, and 
 
 These are labeled field groups in the native settings, not custom collapsible panels. All five groups may be visible. The documented MCPB settings format supports fields, checkboxes, and folder pickers; it does not provide a dynamic Add Website button or conditional section rendering. The host controls their presentation. [MCPB settings specification](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md).
 
-Reload/restart the extension after saving settings. Verify version 1.5.0 and sixteen tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
+Reload/restart the extension after saving settings. Verify version 1.6.0 and sixteen tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
 
 ## Separate blog image folders
 
@@ -65,15 +65,18 @@ Requirements:
 
 ## SEO fields (Yoast SEO / Rank Math)
 
-Claude can set a post's or page's **SEO title**, **meta description** and **focus keyword**. Neither Yoast SEO nor Rank Math lets other tools change these over the REST API, so each site needs the small companion plugin **MKT WP Publisher SEO Bridge**.
+Claude can set a post's or page's **SEO title**, **meta description**, **focus keyword** and **canonical URL**. Neither Yoast SEO nor Rank Math lets other tools change these over the REST API, so each site needs the small companion plugin **MKT Publisher SEO Bridge for Yoast & Rank Math** (bridge version 1.1.0).
 
-Install it once per website:
+Install it once per website, or update it:
 
 1. In WordPress admin, go to **Plugins → Add New → Upload Plugin**.
-2. Upload `mkt-wp-publisher-seo-bridge.zip` and click **Activate**. It's built next to the `.mcpb` file; the source is in `wordpress-plugin/`.
-3. Make sure Yoast SEO or Rank Math is active. If both are, Yoast is used.
+2. Upload `mkt-wp-publisher-seo-bridge.zip` and click **Install Now**. It's built next to the `.mcpb` file; the source is in `wordpress-plugin/`. When updating from 1.0.0, WordPress asks whether to replace the installed version: choose **Replace current with uploaded**.
+3. Click **Activate** (new installs only), and make sure Yoast SEO or Rank Math is active. If both are, Yoast is used.
+4. Open **Tools → MKT SEO Bridge**, or the **Status** link under the plugin on the Plugins screen. It shows the icon, the bridge version, the detected SEO plugin, whether Application Passwords are allowed, and which fields the extension can update.
 
-The bridge has no settings. It only lets accounts that can edit a post change that post's SEO fields. If the bridge or an SEO plugin is missing, Claude gets a clear error and **nothing is saved**.
+The bridge has no settings. It only lets accounts that can edit a post change that post's SEO fields. Values have maximum lengths (title 300, description 1,000, focus keyword 200, canonical 2,048 characters), and canonical URLs must be `http://` or `https://` links. If the bridge or an SEO plugin is missing, or the bridge is too old for a field (canonical needs 1.1.0), Claude gets a clear error and **nothing is saved**.
+
+On a published post, edited SEO values show up on the live page right away. The bridge saves them just before WordPress saves the post, so Yoast rebuilds its page data with the new values. Bridge 1.0.0 only showed them after the next save.
 
 Example prompts:
 

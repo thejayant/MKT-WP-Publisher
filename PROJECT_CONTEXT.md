@@ -2,7 +2,7 @@
 
 This file gives a developer (or an AI assistant) what they need to work on this codebase. For end-user setup, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
-_Last reviewed: 2026-10-20 · version 1.5.0_
+_Last reviewed: 2026-10-20 · version 1.6.0_
 
 ## What it is
 
@@ -33,7 +33,7 @@ list_sites → test_connection → list_authors / list_categories / list_tags / 
 | --- | --- |
 | `manifest.json` | MCPB manifest (v0.3): settings UI (`user_config`), env-var wiring, tool list, icons, compatibility. |
 | `server/` | The MCP server. `service.js` is the entry module (`makeService`, `start`); `schema.js` defines tools and validation; `config.js` reads settings; `wp-client.js` is the HTTP client; `rpc.js` is the stdio loop; `tools/*.js` hold the handlers; `markdown.js` converts Markdown. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). |
-| `wordpress-plugin/mkt-wp-publisher-seo-bridge/` | Companion WordPress plugin (PHP) that exposes Yoast/Rank Math SEO fields as the REST field `mkt_seo`. Installed on each site, not part of the `.mcpb`. |
+| `wordpress-plugin/mkt-wp-publisher-seo-bridge/` | Companion WordPress plugin "MKT Publisher SEO Bridge for Yoast & Rank Math" (PHP, v1.1.0, with `assets/` icons and `readme.txt`). Exposes Yoast/Rank Math SEO fields as the REST field `mkt_seo`, plus a Tools status page. Installed on each site, not part of the `.mcpb`. |
 | `test/*.test.js` | `node:test` suites by area (64 tests) with a mocked `fetch`; `rpc.test.js` also spawns the server. `test/helpers.js` has the fixtures. |
 | `test/live/wordpress.live.js` | Opt-in test against a real staging site (`npm run test:live`). |
 | `scripts/` | `test.js` (test runner), `lint.js`, `pack.js` (release build), `zip.js` (dependency-free zip writer). |

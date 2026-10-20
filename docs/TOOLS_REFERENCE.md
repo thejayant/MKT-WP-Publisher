@@ -225,17 +225,25 @@ Write. **Takes content off the public site.** Use only after the user explicitly
 
 ## SEO fields
 
-`create_draft` and `update_draft` accept `seo: { title?, description?, focus_keyword? }`. An empty string clears a value.
+`create_draft`, `update_draft` and `edit_published_post` accept `seo: { title?, description?, focus_keyword?, canonical? }`. An empty string clears a value. `canonical` must be a full `http://` or `https://` URL.
 
-This needs the **MKT WP Publisher SEO Bridge** plugin (`wordpress-plugin/` in the source) on each site, plus **Yoast SEO** or **Rank Math**. Neither SEO plugin exposes these fields to the REST API on its own. The bridge adds a REST field, `mkt_seo`, that maps to:
+This needs the **MKT Publisher SEO Bridge for Yoast & Rank Math** plugin (`wordpress-plugin/` in the source) on each site, plus **Yoast SEO** or **Rank Math**. Neither SEO plugin exposes these fields to the REST API on its own. The bridge adds a REST field, `mkt_seo`, that maps to:
 
-| Field | Yoast SEO meta | Rank Math meta |
-| --- | --- | --- |
-| `title` | `_yoast_wpseo_title` | `rank_math_title` |
-| `description` | `_yoast_wpseo_metadesc` | `rank_math_description` |
-| `focus_keyword` | `_yoast_wpseo_focuskw` | `rank_math_focus_keyword` |
+| Field | Yoast SEO meta | Rank Math meta | Max length | Bridge |
+| --- | --- | --- | --- | --- |
+| `title` | `_yoast_wpseo_title` | `rank_math_title` | 300 | 1.0.0+ |
+| `description` | `_yoast_wpseo_metadesc` | `rank_math_description` | 1,000 | 1.0.0+ |
+| `focus_keyword` | `_yoast_wpseo_focuskw` | `rank_math_focus_keyword` | 200 | 1.0.0+ |
+| `canonical` | `_yoast_wpseo_canonical` | `rank_math_canonical_url` | 2,048 | 1.1.0+ |
 
-Before any write that includes `seo`, the server sends `OPTIONS` to the endpoint to read the bridge's schema. If the bridge is missing, or no SEO plugin is active, the call fails **before anything is saved**. A positive result is cached until restart. If both SEO plugins are active, Yoast is used. Values go through WordPress's `sanitize_text_field` (tags stripped). Variables like `%%title%%` are kept.
+Before any write that includes `seo`, the server sends `OPTIONS` to the endpoint to read the bridge's schema: the active SEO plugin, and from 1.1.0 the bridge version and supported fields. The call fails **before anything is saved** if:
+- the bridge is missing;
+- no SEO plugin is active;
+- a field needs a newer bridge (for example `canonical` on 1.0.0).
+
+A positive result is cached until restart. If both SEO plugins are active, Yoast is used. Values go through WordPress's `sanitize_text_field` (tags stripped); canonical URLs go through `esc_url_raw`. Variables like `%%title%%` are kept. Read results include `seo.version` with bridge 1.1.0.
+
+On existing posts, bridge 1.1.0 saves the values before WordPress saves the post, so Yoast rebuilds its cached page data (its "indexable") with the new values. Edits to live posts therefore show immediately.
 
 ## Markdown
 

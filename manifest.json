@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mkt-wp-publisher",
   "display_name": "MKT WP Publisher",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "author": {
     "name": "Jayant"

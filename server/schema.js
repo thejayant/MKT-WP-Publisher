@@ -19,8 +19,8 @@ const postType = {
 };
 const seo = {
   type: 'object',
-  properties: {title: str, description: str, focus_keyword: str},
-  description: 'Yoast SEO or Rank Math fields: title, description (meta description), focus_keyword. Empty text clears a value. Needs the MKT WP Publisher SEO Bridge plugin on the site.',
+  properties: {title: str, description: str, focus_keyword: str, canonical: str},
+  description: 'Yoast SEO or Rank Math fields: title (SEO title), description (meta description), focus_keyword, canonical (full http/https URL; needs bridge 1.1.0+). Empty text clears a value. Needs the MKT Publisher SEO Bridge plugin on the site.',
 };
 const fields = {
   post_type: postType,

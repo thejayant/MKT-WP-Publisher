@@ -113,9 +113,10 @@ None of these sequences is atomic. `expected_modified_gmt` narrows the window, b
 
 A WordPress plugin that calls `register_rest_field('post'|'page', 'mkt_seo', …)`:
 
-- **get:** `{plugin, title, description, focus_keyword}`, read from Yoast or Rank Math post meta. Only shown to users who can edit the post (edit context).
+- **get:** `{plugin, version, title, description, focus_keyword, canonical}`, read from Yoast or Rank Math post meta. Only shown to users who can edit the post (edit context).
 - **update:** `sanitize_text_field`, then `update_post_meta` (an empty string → `delete_post_meta`). Needs `edit_post`.
-- **schema:** `plugin.enum` is set to the active SEO plugin (`yoast`, `rank-math` or `none`) when the field is registered. That lets the extension find out with one `OPTIONS` request, before writing anything, whether SEO writes will work.
+- **early save (1.1.0):** for existing posts, a `rest_pre_insert_{post|page}` filter saves the values before WordPress saves the post, so Yoast rebuilds its indexable from them; `update_callback` then skips. New posts are saved by `update_callback` (they have an ID only after insert).
+- **schema:** `plugin.enum` is set to the active SEO plugin (`yoast`, `rank-math` or `none`), and `version.enum` to the bridge version, when the field is registered. Fields carry `maxLength` (and a URL pattern for `canonical`), so WordPress rejects bad values before anything is saved. That lets the extension find out with one `OPTIONS` request, before writing anything, whether SEO writes will work.
 
 ## Security model
 

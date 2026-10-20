@@ -32,10 +32,17 @@ if (!pluginOnly) {
 }
 
 const pluginDir = path.join(root, 'wordpress-plugin', 'mkt-wp-publisher-seo-bridge');
-const entries = [{name: 'mkt-wp-publisher-seo-bridge/'}];
-for (const name of fs.readdirSync(pluginDir).sort()) {
-  entries.push({name: 'mkt-wp-publisher-seo-bridge/' + name, data: fs.readFileSync(path.join(pluginDir, name))});
-}
+const entries = [];
+// Folders first, then their files, all under mkt-wp-publisher-seo-bridge/ (what WordPress's uploader expects).
+(function addFolder(dir, prefix) {
+  entries.push({name: prefix});
+  for (const entry of fs.readdirSync(dir, {withFileTypes: true}).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.name.endsWith('.bak')) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) addFolder(full, prefix + entry.name + '/');
+    else entries.push({name: prefix + entry.name, data: fs.readFileSync(full)});
+  }
+})(pluginDir, 'mkt-wp-publisher-seo-bridge/');
 const zipPath = path.join(outDir, 'mkt-wp-publisher-seo-bridge.zip');
 fs.writeFileSync(zipPath, createZip(entries));
 console.log('Wrote ' + zipPath);

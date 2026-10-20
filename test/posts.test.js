@@ -232,3 +232,32 @@ test('1.5: unpublish_post moves published or scheduled posts back to draft', asy
   await assert.rejects(makeService(env, wrong.f)('unpublish_post', {site_id: 'site-b', post_id: 95, confirm_title: 'Other', confirm_unpublish: true}), /does not match/);
   assert.equal(wrong.calls.length, 1);
 });
+
+test('SEO Bridge 1.1: canonical is sent when the bridge supports it, refused (before writing) on bridge 1.0', async () => {
+  const bridge11 = {schema: {properties: {mkt_seo: {properties: {plugin: {enum: ['yoast']}, version: {enum: ['1.1.0']}, title: {}, description: {}, focus_keyword: {}, canonical: {}}}}}};
+  const live = {id: 81, status: 'publish', title: {raw: 'Moved article'}};
+  const m = mock([bridge11, live, {...live, mkt_seo: {plugin: 'yoast', version: '1.1.0', canonical: 'https://old.example/article'}}]);
+  const r = await makeService(env, m.f)('edit_published_post', {site_id: 'site-a', post_id: 81, seo: {canonical: 'https://old.example/article'}, confirm_title: 'Moved article', confirm_edit: true});
+  assert.deepEqual(JSON.parse(m.calls[2].o.body), {mkt_seo: {canonical: 'https://old.example/article'}});
+  assert.equal(r.data.seo.canonical, 'https://old.example/article');
+
+  const old = mock([seoSchema('yoast')]);
+  await assert.rejects(
+    makeService(env, old.f)('update_draft', {site_id: 'site-a', post_id: 81, seo: {title: 'T', canonical: 'https://x.example/'}}),
+    /SEO Bridge plugin on site site-a \(version 1\.0\.0\) does not support canonical\. Update it to version 1\.1\.0.*Nothing was saved/,
+  );
+  assert.equal(old.calls.length, 1, 'only the OPTIONS check ran');
+
+  const base = mock([seoSchema('rank-math'), {id: 5, status: 'draft'}, {id: 5, status: 'draft', mkt_seo: {plugin: 'rank-math'}}]);
+  await makeService(env, base.f)('update_draft', {site_id: 'site-a', post_id: 5, seo: {title: 'T', description: 'D', focus_keyword: 'k'}});
+  assert.equal(base.calls.length, 3, 'bridge 1.0 still handles the original three fields');
+
+  for (const canonical of ['ftp://x.example/', 'javascript:alert(1)', '/relative/path', 'https://has space.example']) {
+    const bad = mock([]);
+    await assert.rejects(makeService(env, bad.f)('update_draft', {site_id: 'site-a', post_id: 5, seo: {canonical}}), /seo\.canonical must be a full http/);
+    assert.equal(bad.calls.length, 0);
+  }
+  const clear = mock([bridge11, {id: 5, status: 'draft'}, {id: 5, status: 'draft', mkt_seo: {plugin: 'yoast', canonical: ''}}]);
+  await makeService(env, clear.f)('update_draft', {site_id: 'site-a', post_id: 5, seo: {canonical: ''}});
+  assert.deepEqual(JSON.parse(clear.calls[2].o.body), {mkt_seo: {canonical: ''}});
+});

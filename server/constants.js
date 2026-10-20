@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const MAX_SITES = 5;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const IMAGE_TYPES = {

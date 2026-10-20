@@ -36,18 +36,29 @@ function postContext(ctx, args) {
 }
 
 /**
- * The SEO Bridge plugin advertises the active SEO plugin in the endpoint schema (OPTIONS),
- * so this runs before any write that includes seo. A positive answer is cached per site and route.
+ * The SEO Bridge plugin advertises the active SEO plugin (and, from 1.1.0, its version and fields) in the endpoint
+ * schema (OPTIONS), so this runs before any write that includes seo. A positive answer is cached per site and route.
  */
-async function requireSeoPlugin(ctx, route) {
+// Fields every bridge version supports; newer fields are checked against the site's bridge schema.
+const BASE_SEO_FIELDS = ['title', 'description', 'focus_keyword'];
+
+async function requireSeoPlugin(ctx, route, seo) {
   const key = ctx.site.site_url + route;
-  if (ctx.state.seoPlugins.has(key)) return ctx.state.seoPlugins.get(key);
-  const schema = await ctx.request(route, {method: 'OPTIONS'});
-  const plugin = schema?.schema?.properties?.mkt_seo?.properties?.plugin?.enum?.[0];
-  if (!plugin) throw new Error('SEO fields need the MKT WP Publisher SEO Bridge plugin on site ' + ctx.site.site_id + '. Install and activate it in WordPress (Plugins > Add New > Upload), then retry. Nothing was saved.');
-  if (plugin === 'none') throw new Error('Site ' + ctx.site.site_id + ' has the SEO Bridge plugin but neither Yoast SEO nor Rank Math is active. Nothing was saved.');
-  ctx.state.seoPlugins.set(key, plugin);
-  return plugin;
+  let bridge = ctx.state.seoPlugins.get(key);
+  if (!bridge) {
+    const schema = await ctx.request(route, {method: 'OPTIONS'});
+    const props = schema?.schema?.properties?.mkt_seo?.properties;
+    const plugin = props?.plugin?.enum?.[0];
+    if (!plugin) throw new Error('SEO fields need the MKT Publisher SEO Bridge plugin on site ' + ctx.site.site_id + '. Install and activate it in WordPress (Plugins > Add New > Upload), then retry. Nothing was saved.');
+    if (plugin === 'none') throw new Error('Site ' + ctx.site.site_id + ' has the SEO Bridge plugin but neither Yoast SEO nor Rank Math is active. Nothing was saved.');
+    bridge = {plugin, version: props.version?.enum?.[0] || '1.0.0', fields: new Set([...BASE_SEO_FIELDS, ...Object.keys(props)])};
+    ctx.state.seoPlugins.set(key, bridge);
+  }
+  const unsupported = Object.keys(seo).filter(field => !bridge.fields.has(field));
+  if (unsupported.length) {
+    throw new Error('The SEO Bridge plugin on site ' + ctx.site.site_id + ' (version ' + bridge.version + ') does not support ' + unsupported.join(', ') + '. Update it to version 1.1.0 or later (upload the new zip and choose Replace current with uploaded). Nothing was saved.');
+  }
+  return bridge.plugin;
 }
 
 /**
@@ -67,7 +78,10 @@ async function prepareWrite(ctx, args, pc) {
   if (content_format !== undefined && body.content === undefined) throw new Error('content_format needs content.');
   if (content_format === 'markdown') body.content = markdownToHtml(body.content);
   if (seo) {
-    await requireSeoPlugin(ctx, pc.route);
+    if (seo.canonical !== undefined && seo.canonical !== '' && !/^https?:\/\/\S+$/i.test(seo.canonical)) {
+      throw new Error('seo.canonical must be a full http:// or https:// URL, or empty to remove it.');
+    }
+    await requireSeoPlugin(ctx, pc.route, seo);
     body.mkt_seo = seo;
   }
   // Report SEO values from the write response; warn if WordPress did not return them.

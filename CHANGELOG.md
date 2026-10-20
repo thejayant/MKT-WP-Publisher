@@ -1,5 +1,22 @@
 # Changelog
 
+## MKT WP Publisher 1.6.0 (with SEO Bridge 1.1.0)
+
+SEO Bridge plugin, renamed **MKT Publisher SEO Bridge for Yoast & Rank Math**:
+- New icon (matching the extension), plus a `readme.txt`.
+- Fix: on existing posts, SEO values are saved before WordPress saves the post, so Yoast shows edited titles and descriptions on live pages right away. In 1.0.0 they appeared only after the next save, which mattered once edit_published_post was added.
+- New canonical URL field (Yoast SEO and Rank Math).
+- Maximum lengths, validated before anything is saved.
+- Tools → MKT SEO Bridge status page (bridge version, SEO plugin, Application Passwords, fields) and a Status link on the Plugins screen.
+- The REST field reports the bridge version.
+- "Update URI: false", so WordPress never offers an unrelated wordpress.org plugin as an update.
+- Folder name, zip name and REST field (`mkt_seo`) are unchanged, so updating keeps existing installs working.
+
+Extension:
+- `seo.canonical` (full http/https URL) on create_draft, update_draft and edit_published_post.
+- The bridge check also reads the bridge version and fields. A field the site's bridge doesn't support (canonical on 1.0.0) is refused before anything is saved, with an "update the bridge" message. Bridge 1.0.0 keeps working for the original three fields.
+- `npm run pack` zips the plugin's subfolders (the new assets/ icons).
+
 ## MKT WP Publisher 1.5.0
 
 Editing beyond drafts, back-dating and unpublishing.

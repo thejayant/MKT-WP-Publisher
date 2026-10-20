@@ -1,6 +1,6 @@
 # MKT WP Publisher
 
-**Version 1.5.0 · Developed by Jayant**
+**Version 1.6.0 · Developed by Jayant**
 
 A Claude Desktop extension that lets Claude draft, schedule, publish and edit blog posts and pages on **up to five WordPress websites**. Each website has its own login (WordPress Application Password) and its own local blog image folder. Content is always created as a draft first. Publishing, scheduling, editing a live post and unpublishing each need your explicit approval.
 
@@ -26,14 +26,14 @@ A Claude Desktop extension that lets Claude draft, schedule, publish and edit bl
 
 Every draft comes with a `preview_url` for review. Reads are retried automatically when a busy host answers "try again later". An optional `expected_modified_gmt` check stops Claude from overwriting changes someone else made in WordPress in the meantime.
 
-**SEO fields** (Yoast SEO or Rank Math: SEO title, meta description, focus keyword) need the small companion plugin **MKT WP Publisher SEO Bridge** installed on each site. See [the user guide](docs/USER_GUIDE.md#seo-fields-yoast-seo--rank-math).
+**SEO fields** (Yoast SEO or Rank Math: SEO title, meta description, focus keyword, canonical URL) need the small companion plugin **MKT Publisher SEO Bridge for Yoast & Rank Math** installed on each site. See [the user guide](docs/USER_GUIDE.md#seo-fields-yoast-seo--rank-math).
 
 Not included: custom post types, deleting content, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 
 ## Quick start
 
 1. **Create an Application Password** in each WordPress site: *Users → Profile → Application Passwords*. Use an **Editor or Administrator** account if you want to credit posts to other authors.
-2. **Install** `mkt-wp-publisher-1.5.0.mcpb` from Claude Desktop's extension settings.
+2. **Install** `mkt-wp-publisher-1.6.0.mcpb` from Claude Desktop's extension settings.
 3. **Fill in Website 1**: name, HTTPS URL (for example `https://example.com`), username, Application Password and blog image folder. Turn on **Enable website 1**. Repeat for Websites 2–5 if you need them.
 4. *(Optional, for SEO fields)* Upload `mkt-wp-publisher-seo-bridge.zip` in each WordPress site under *Plugins → Add New → Upload Plugin*, then activate it.
 5. **Restart the extension**, then ask Claude:

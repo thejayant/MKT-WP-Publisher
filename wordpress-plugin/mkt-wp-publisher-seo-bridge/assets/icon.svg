@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 512 512" fill="none">
+  <title>MKT Publisher SEO Bridge</title>
+  <desc>An ivory M and a coral magnifying glass on a deep navy rounded square, matching the MKT WP Publisher icon.</desc>
+  <rect width="512" height="512" rx="112" fill="#101E32"/>
+  <rect x="1" y="1" width="510" height="510" rx="111" stroke="#26364B" stroke-width="2"/>
+  <path d="M96 392V220L176 318L256 220V392" stroke="#F5F1E8" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="352" cy="176" r="62" stroke="#FF765C" stroke-width="30"/>
+  <path d="M398 222L436 260" stroke="#FF765C" stroke-width="34" stroke-linecap="round"/>
+  <path d="M322 190L344 168L362 184L384 160" stroke="#FF765C" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
