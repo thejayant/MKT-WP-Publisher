@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mkt-wp-publisher",
   "display_name": "MKT WP Publisher",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "author": {
     "name": "Jayant"
@@ -367,11 +367,19 @@
     },
     {
       "name": "update_draft",
-      "description": "Update a draft post or page, including its author and SEO fields."
+      "description": "Update a draft, pending or scheduled post or page."
+    },
+    {
+      "name": "edit_published_post",
+      "description": "Edit a live post: content, images, SEO title/description; the title must be confirmed."
     },
     {
       "name": "publish_post",
-      "description": "Publish a draft on explicit request; the title must be confirmed."
+      "description": "Publish a draft now or with a back date; the title must be confirmed."
+    },
+    {
+      "name": "unpublish_post",
+      "description": "Move a published or scheduled post back to draft; the title must be confirmed."
     },
     {
       "name": "schedule_post",

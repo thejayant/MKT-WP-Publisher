@@ -38,6 +38,7 @@ const fields = {
 };
 // Optional optimistic-concurrency guard: the modified_gmt from get_post or list_posts.
 const expectedModified = {type: 'string', description: 'modified_gmt from get_post/list_posts. If the post changed in WordPress since then, nothing is written.'};
+const publishDate = {type: 'string', description: 'Back date: ISO 8601 date-time with a timezone, now or in the past, e.g. 2025-03-01T10:00:00+05:30. For a future time use schedule_post.'};
 
 const SITE_RESULT = {
   type: 'object',
@@ -113,12 +114,20 @@ const tools = [
     'Create a draft post or page on the selected site with a unique slug. Optional author sets who it is credited to; content_format markdown converts Markdown to HTML; seo sets Yoast/Rank Math fields. Save site_id with post_id. Never retry blindly after a timeout.',
     fields, {required: ['title', 'content', 'slug']}),
   tool('update_draft',
-    'Update a draft or pending post or page on the selected site (pass the same post_type it was created with). featured_media:0 clears its featured image. Pass at least one field to change. Avoid concurrent editors.',
+    'Update a draft, pending or scheduled post or page on the selected site (pass the same post_type it was created with). A scheduled post keeps its publish time. featured_media:0 clears its featured image. Pass at least one field to change. For published posts use edit_published_post. Avoid concurrent editors.',
     {post_id: int, ...fields, expected_modified_gmt: expectedModified}, {required: ['post_id'], hints: {idempotentHint: true}}),
+  tool('edit_published_post',
+    'Change a PUBLISHED (or private) post or page: content, title, featured image, categories, tags, author, SEO title/description, slug or a back date (publish_date). Changes are public immediately, so use ONLY after the user explicitly approves this site, post and change. confirm_title must exactly match the CURRENT title (read it with get_post) even when changing the title. Changing the slug changes the public URL.',
+    {post_id: int, ...fields, publish_date: publishDate, confirm_title: str, confirm_edit: {type: 'boolean', const: true}, expected_modified_gmt: expectedModified},
+    {required: ['post_id', 'confirm_title', 'confirm_edit'], hints: {destructiveHint: true, idempotentHint: true}}),
   tool('publish_post',
-    'Publish ONLY after the user explicitly approves this site and post. confirm_title must exactly match the post\'s current title on this site (read it with get_post). confirm_publish is a caller assertion, not independent human verification. Posts with a future date are refused because WordPress would schedule them; use schedule_post for that.',
-    {post_type: postType, post_id: int, confirm_title: str, confirm_publish: {type: 'boolean', const: true}, expected_modified_gmt: expectedModified},
+    'Publish ONLY after the user explicitly approves this site and post. confirm_title must exactly match the post\'s current title on this site (read it with get_post). confirm_publish is a caller assertion, not independent human verification. Optional publish_date back-dates the post (now or earlier). Posts with a future date and no publish_date are refused because WordPress would schedule them; use schedule_post for that.',
+    {post_type: postType, post_id: int, publish_date: publishDate, confirm_title: str, confirm_publish: {type: 'boolean', const: true}, expected_modified_gmt: expectedModified},
     {required: ['post_id', 'confirm_title', 'confirm_publish'], hints: {destructiveHint: true}}),
+  tool('unpublish_post',
+    'Take a published, private, scheduled or pending post or page back to draft (this also unschedules it). It disappears from the public site. Use ONLY after the user explicitly approves this site and post. confirm_title must exactly match the current title (read it with get_post).',
+    {post_type: postType, post_id: int, confirm_title: str, confirm_unpublish: {type: 'boolean', const: true}, expected_modified_gmt: expectedModified},
+    {required: ['post_id', 'confirm_title', 'confirm_unpublish'], hints: {destructiveHint: true, idempotentHint: true}}),
   tool('schedule_post',
     'Schedule a draft, pending or already scheduled post for automatic publication. Use ONLY after the user explicitly approves this site, post and time. publish_at is an ISO 8601 date-time with a timezone (Z or +05:30), at least 2 minutes and at most 2 years ahead. confirm_title must exactly match the current title (read it with get_post). WordPress publishes it at that time without further approval.',
     {post_type: postType, post_id: int, publish_at: str, confirm_title: str, confirm_schedule: {type: 'boolean', const: true}, expected_modified_gmt: expectedModified},

@@ -12,13 +12,13 @@ Unknown arguments are always rejected.
 
 **Posts and pages:** `list_posts`, `get_post`, `create_draft`, `update_draft`, `publish_post` and `schedule_post` take an optional `post_type`: `post` (default) or `page`. Pages use `/wp/v2/pages`. They don't take `categories`, `tags` or `excerpt`, but they can have a `parent` page. Keep `post_type` paired with the ID, the same way you keep `site_id`.
 
-**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only `publish_post` and `schedule_post` are `destructiveHint: true`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
+**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only the tools that change public content are `destructiveHint: true`: `publish_post`, `schedule_post`, `edit_published_post` and `unpublish_post`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
 
 **Plain permalinks:** if `/wp-json/...` returns WordPress's HTML 404 page, the server retries that request once as `/?rest_route=/wp/v2/...`. It keeps using that form for the site until the extension restarts. The retry is safe for writes, because an unrouted 404 means WordPress processed nothing.
 
 **Retries and timeouts:** reads (`GET`, `OPTIONS`) that get 429, 502, 503 or 504 are retried up to twice, after 1 s and 3 s, or after the `Retry-After` header (capped at 10 s). Writes are never retried. Each request times out after 60 s; image uploads after 180 s.
 
-**Concurrency guard:** `update_draft`, `publish_post` and `schedule_post` accept `expected_modified_gmt`, the `modified_gmt` value from `get_post` or `list_posts`. If the post was changed in WordPress since then, the call fails and nothing is written. A trailing `Z` or `+00:00` is ignored when comparing.
+**Concurrency guard:** `update_draft`, `edit_published_post`, `publish_post`, `unpublish_post` and `schedule_post` accept `expected_modified_gmt`, the `modified_gmt` value from `get_post` or `list_posts`. If the post was changed in WordPress since then, the call fails and nothing is written. A trailing `Z` or `+00:00` is ignored when comparing.
 
 ---
 
@@ -148,13 +148,26 @@ Write.
 Status is always `draft`. Fails if the slug already exists for that post type in draft, pending, future, publish or private.
 
 ## update_draft
-Write. Only for `draft` or `pending` posts.
+Write. For `draft`, `pending` and scheduled (`future`) posts. A scheduled post keeps its publish time; to move the time use `schedule_post`, to cancel it use `unpublish_post`. Published posts are refused (use `edit_published_post`).
 
 Args: `post_id` (required), `post_type` (the same one the item was created with), optional `expected_modified_gmt`, plus at least one `create_draft` field. `content_format` needs `content`. Calling it with no field to change is an error and sends nothing. `featured_media: 0` removes the featured image.
 
 A new `slug` is checked against the other posts of that type first, and taken slugs are refused. If WordPress still saves a different slug, the summary includes a `warning`.
 
-**Returns `data`:** post summary.
+**Returns `data`:** post summary. If WordPress returns a different status than before, a `warning` says so.
+
+## edit_published_post
+Write. **Changes public content immediately.** Use only after the user explicitly approves this site, this post and the change.
+
+Args: `post_id` (required), `post_type`, `confirm_title` (required: the **current** title, even when changing the title), `confirm_edit: true` (required), optional `expected_modified_gmt`, plus at least one field from `create_draft` (`title`, `content`/`content_format`, `slug`, `excerpt`, `categories`, `tags`, `featured_media`, `author`, `parent`, `seo`) or `publish_date`.
+
+- Works on `publish` and `private` posts/pages only; drafts and scheduled posts point to `update_draft`.
+- `publish_date`: ISO 8601 with a timezone, now or in the past. It changes the post's date (back-dating).
+- A changed `slug` is checked against other posts, and the result warns that the public URL changed.
+- To swap images: upload with `upload_image`, then pass the new `media_id` as `featured_media`, or put its `html` into `content`.
+- To change the meta title/description: `seo: { title, description }` (needs the SEO Bridge plugin).
+
+**Returns `data`:** post summary (with `seo` when written), plus a `warning` when something needs checking.
 
 ## publish_post
 Write. **Use only after the user explicitly approves this site and this post.**
@@ -165,13 +178,15 @@ Write. **Use only after the user explicitly approves this site and this post.**
 | `post_id` | integer ≥ 1, required | |
 | `confirm_title` | string, required | Must match the current title (whitespace-normalised) |
 | `confirm_publish` | `true`, required | |
+| `publish_date` | string | optional back date: ISO 8601 with a timezone, now or in the past |
 | `expected_modified_gmt` | string | optional concurrency guard |
 
 **Behaviour:**
 - Title mismatch → error, nothing changes.
-- Already `publish` → returns the summary, no write.
+- Already `publish` → returns the summary, no write. With `publish_date` → error pointing to `edit_published_post`.
 - Status other than `draft`/`pending` → error.
-- `date_gmt` more than 60 s in the future → error pointing to `schedule_post` (WordPress would schedule it).
+- With `publish_date`: sends `{ status: 'publish', date_gmt }` and returns `published_at_gmt`. A future `publish_date` is refused (use `schedule_post`).
+- Without `publish_date`: a `date_gmt` more than 60 s in the future → error pointing to `schedule_post`, or to `publish_date` to publish now.
 - WordPress returns a status other than `publish` → summary plus `warning`.
 
 ## schedule_post
@@ -191,7 +206,22 @@ Write. **Use only after the user explicitly approves this site, this post and th
 - Works on `draft`, `pending` and already-scheduled (`future`) posts. Calling it again on a scheduled post moves the time.
 - Sends `{ status: 'future', date_gmt }`.
 - **Returns `data`:** the summary plus `publish_at_gmt`. If WordPress returns a status other than `future`, a `warning` is added.
-- To cancel a schedule, change the post back to draft in WordPress. There's no unschedule tool yet.
+- To cancel a schedule, use `unpublish_post`.
+
+## unpublish_post
+Write. **Takes content off the public site.** Use only after the user explicitly approves this site and this post.
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_type` | `post` \| `page` | default `post` |
+| `post_id` | integer ≥ 1, required | |
+| `confirm_title` | string, required | Must match the current title |
+| `confirm_unpublish` | `true`, required | |
+| `expected_modified_gmt` | string | optional concurrency guard |
+
+**Behaviour:**
+- Works on `publish`, `private`, `future` (scheduled) and `pending` posts/pages, and sends `{ status: 'draft' }`. An existing draft is returned unchanged, with no write.
+- **Returns `data`:** the summary plus `previous_status`. A formerly scheduled post keeps its future date; the `warning` says to use `schedule_post` again, or `publish_post` with `publish_date` to publish it now.
 
 ## SEO fields
 
@@ -236,6 +266,8 @@ With `content_format: 'markdown'`, `content` is converted to HTML locally before
 | `SEO fields need the MKT WP Publisher SEO Bridge plugin…` | Install the bridge on that site. Nothing was saved. |
 | `… neither Yoast SEO nor Rank Math is active` | Activate one of them. Nothing was saved. |
 | `… applies to posts only` / `parent applies to pages only` | Wrong field for this `post_type`. |
+| `publish_date must be now or in the past` | For a future time use `schedule_post`. |
+| `edit_published_post works on publish/private …` / `update_draft works on draft/pending/future …` | Use the other tool for that status. |
 | `publish_at must …` | Use ISO 8601 with a timezone, between 2 minutes and 2 years ahead. |
 | `… changed since you read it` | Someone edited the post in WordPress. Read it again with `get_post` and check with the user. Nothing was written. |
 | `The content of X is …, but its extension says …` | The file was renamed or exported wrongly. Re-export it. Nothing was uploaded. |

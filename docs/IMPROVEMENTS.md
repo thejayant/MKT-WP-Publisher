@@ -12,7 +12,7 @@ The original review found strong safety rails (no implicit site, draft-first pub
 | F7b | **Custom post types** (beyond posts and pages) | `post_type` is limited to `post`/`page`. CPTs need their REST base and taxonomy rules per site. |
 | F12b | **Native block markup** for Markdown | Markdown becomes HTML (a Classic block, one click to convert). Native blocks risk editor validation warnings across WordPress versions. |
 | F14b | **Image resize/compress** | Would need an image library (a dependency). WordPress already creates resized copies on upload. |
-| F19 | **Unschedule tool** | Moving a scheduled post back to draft is done in WordPress for now. |
+| F19 | ✅ 1.5.0 — **Unschedule tool** | `unpublish_post` moves published or scheduled posts back to draft. 1.5.0 also added `edit_published_post` and back-dating. |
 | F18 | **More than 5 sites** | Only if needed. It's a manifest limit (static settings groups), so JSON profiles would be the way to do it. |
 | H5b | **Reformat older test bodies** | The tests are split by area and new tests are readable. Older test bodies are still compact. A formatter (Prettier) would need a dev dependency. |
 | H7b | **ESLint/Prettier** | `npm run lint` is dependency-free (syntax, whitespace, consistency). Full linting would need dev dependencies. |

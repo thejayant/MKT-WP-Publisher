@@ -16,7 +16,7 @@ test('draft creation strips routing fields and forces draft, rejecting injected 
 test('publication requires confirmation; published/future posts are protected',async()=>{
  const m=mock([{id:1,status:'publish',title:{raw:'T'}},{id:1,status:'future',title:{raw:'T'}},{id:1,status:'publish',title:{raw:'T'}}]);const call=makeService(env,m.f);
  await assert.rejects(call('publish_post',{site_id:'site-a',post_id:1,confirm_title:'T',confirm_publish:false}),/must be true/);
- await assert.rejects(call('update_draft',{site_id:'site-a',post_id:1,title:'change'}),/draft or pending/);
+ await assert.rejects(call('update_draft',{site_id:'site-a',post_id:1,title:'change'}),/this one is publish. To change a published post, use edit_published_post/);
  await assert.rejects(call('publish_post',{site_id:'site-a',post_id:1,confirm_title:'T',confirm_publish:true}),/draft or pending/);
  const result=await call('publish_post',{site_id:'site-a',post_id:1,confirm_title:'T',confirm_publish:true});assert.equal(result.data.status,'publish');assert(m.calls.every(c=>c.o.method==='GET'));
 });
@@ -142,4 +142,93 @@ test('F13: expected_modified_gmt refuses writes when the post changed since it w
     /changed since you read it/,
   );
   assert.equal(sched.calls.length, 1);
+});
+
+test('1.5: update_draft edits scheduled posts and keeps them scheduled', async () => {
+  const scheduled = {id: 70, status: 'future', title: {raw: 'Launch'}, slug: 'launch', date_gmt: '2099-01-01T09:00:00'};
+  const m = mock([scheduled, {...scheduled, title: {raw: 'Launch v2'}}]);
+  const r = await makeService(env, m.f)('update_draft', {site_id: 'site-a', post_id: 70, title: 'Launch v2', featured_media: 12});
+  assert.deepEqual(JSON.parse(m.calls[1].o.body), {title: 'Launch v2', featured_media: 12}, 'no status or date is sent');
+  assert.equal(r.data.status, 'future');
+  assert(!r.data.warning);
+
+  const flipped = mock([scheduled, {...scheduled, status: 'draft'}]);
+  const w = await makeService(env, flipped.f)('update_draft', {site_id: 'site-a', post_id: 70, title: 'X'});
+  assert.match(w.data.warning, /status changed from future to draft/);
+});
+
+test('1.5: edit_published_post changes live posts only with the current title confirmed', async () => {
+  const live = {id: 80, status: 'publish', title: {raw: 'Live title'}, slug: 'live-title', link: 'https://a.example/live-title'};
+  const seo = {title: 'New SEO title', description: 'New meta description'};
+  const m = mock([seoSchema('yoast'), live, {...live, title: {raw: 'Better title'}, featured_media: 44, mkt_seo: {plugin: 'yoast', ...seo, focus_keyword: ''}}]);
+  const r = await makeService(env, m.f)('edit_published_post', {site_id: 'site-a', post_id: 80, title: 'Better title', featured_media: 44, seo, confirm_title: 'Live title', confirm_edit: true});
+  assert.deepEqual(JSON.parse(m.calls[2].o.body), {title: 'Better title', featured_media: 44, mkt_seo: seo});
+  assert.equal(r.data.seo.title, 'New SEO title');
+  assert(!('preview_url' in r.data));
+
+  const wrongTitle = mock([live]);
+  await assert.rejects(makeService(env, wrongTitle.f)('edit_published_post', {site_id: 'site-a', post_id: 80, title: 'X', confirm_title: 'Better title', confirm_edit: true}), /does not match the current title/);
+  assert(wrongTitle.calls.every(c => c.o.method === 'GET'));
+
+  const draft = mock([{...live, status: 'draft'}]);
+  await assert.rejects(makeService(env, draft.f)('edit_published_post', {site_id: 'site-a', post_id: 80, title: 'X', confirm_title: 'Live title', confirm_edit: true}), /publish\/private posts only; this one is draft\. Use update_draft/);
+
+  await assert.rejects(makeService(env, mock([]).f)('edit_published_post', {site_id: 'site-a', post_id: 80, title: 'X', confirm_title: 'Live title', confirm_edit: false}), /must be true/);
+  await assert.rejects(makeService(env, mock([]).f)('edit_published_post', {site_id: 'site-a', post_id: 80, confirm_title: 'Live title', confirm_edit: true}), /needs at least one field/);
+
+  const renamed = mock([live, [], {...live, slug: 'new-url'}]);
+  const s = await makeService(env, renamed.f)('edit_published_post', {site_id: 'site-a', post_id: 80, slug: 'new-url', confirm_title: 'Live title', confirm_edit: true});
+  assert.match(s.data.warning, /public URL changed/);
+
+  const backdated = mock([live, {...live}]);
+  await makeService(env, backdated.f)('edit_published_post', {site_id: 'site-a', post_id: 80, publish_date: '2024-05-01T10:00:00+05:30', confirm_title: 'Live title', confirm_edit: true});
+  assert.deepEqual(JSON.parse(backdated.calls[1].o.body), {date_gmt: '2024-05-01T04:30:00'});
+});
+
+test('1.5: publish_post can back-date, and publish now a draft that has a future date', async () => {
+  const draft = {id: 90, status: 'draft', title: {raw: 'Old news'}, date_gmt: null};
+  const m = mock([draft, {...draft, status: 'publish'}]);
+  const r = await makeService(env, m.f)('publish_post', {site_id: 'site-a', post_id: 90, publish_date: '2025-03-01T10:00:00+05:30', confirm_title: 'Old news', confirm_publish: true});
+  assert.deepEqual(JSON.parse(m.calls[1].o.body), {status: 'publish', date_gmt: '2025-03-01T04:30:00'});
+  assert.equal(r.data.published_at_gmt, '2025-03-01T04:30:00Z');
+
+  const futureDated = {...draft, date_gmt: '2099-01-01T00:00:00'};
+  const now = new Date().toISOString();
+  const f = mock([futureDated, {...futureDated, status: 'publish'}]);
+  await makeService(env, f.f)('publish_post', {site_id: 'site-a', post_id: 90, publish_date: now, confirm_title: 'Old news', confirm_publish: true});
+  assert.equal(JSON.parse(f.calls[1].o.body).status, 'publish');
+
+  for (const [publish_date, re] of [[new Date(Date.now() + 3600000).toISOString(), /now or in the past\. To publish later, use schedule_post/], ['2025-03-01 10:00', /ISO 8601/], ['1980-01-01T00:00:00Z', /too far in the past/]]) {
+    const bad = mock([draft]);
+    await assert.rejects(makeService(env, bad.f)('publish_post', {site_id: 'site-a', post_id: 90, publish_date, confirm_title: 'Old news', confirm_publish: true}), re);
+    assert(bad.calls.every(c => c.o.method === 'GET'));
+  }
+  const already = mock([{...draft, status: 'publish'}]);
+  await assert.rejects(makeService(env, already.f)('publish_post', {site_id: 'site-a', post_id: 90, publish_date: now, confirm_title: 'Old news', confirm_publish: true}), /already published\. To change its date, use edit_published_post/);
+});
+
+test('1.5: unpublish_post moves published or scheduled posts back to draft', async () => {
+  const live = {id: 95, status: 'publish', title: {raw: 'Gone soon'}};
+  const m = mock([live, {...live, status: 'draft'}]);
+  const r = await makeService(env, m.f)('unpublish_post', {site_id: 'site-b', post_id: 95, confirm_title: 'Gone soon', confirm_unpublish: true});
+  assert.deepEqual(JSON.parse(m.calls[1].o.body), {status: 'draft'});
+  assert.equal(r.data.status, 'draft');
+  assert.equal(r.data.previous_status, 'publish');
+  assert(!r.data.warning);
+
+  const scheduled = mock([{...live, status: 'future'}, {...live, status: 'draft'}]);
+  const u = await makeService(env, scheduled.f)('unpublish_post', {site_id: 'site-b', post_id: 95, confirm_title: 'Gone soon', confirm_unpublish: true});
+  assert.match(u.data.warning, /keeps its future date/);
+
+  const page = mock([{...live, type: 'page'}, {...live, type: 'page', status: 'draft'}]);
+  await makeService(env, page.f)('unpublish_post', {site_id: 'site-b', post_type: 'page', post_id: 95, confirm_title: 'Gone soon', confirm_unpublish: true});
+  assert(page.calls.every(c => c.u.includes('/wp/v2/pages/95')));
+
+  const already = mock([{...live, status: 'draft'}]);
+  await makeService(env, already.f)('unpublish_post', {site_id: 'site-b', post_id: 95, confirm_title: 'Gone soon', confirm_unpublish: true});
+  assert.equal(already.calls.length, 1, 'already a draft: nothing written');
+
+  const wrong = mock([live]);
+  await assert.rejects(makeService(env, wrong.f)('unpublish_post', {site_id: 'site-b', post_id: 95, confirm_title: 'Other', confirm_unpublish: true}), /does not match/);
+  assert.equal(wrong.calls.length, 1);
 });

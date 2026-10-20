@@ -2,7 +2,7 @@
 
 This file gives a developer (or an AI assistant) what they need to work on this codebase. For end-user setup, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
-_Last reviewed: 2026-10-20 · version 1.4.0_
+_Last reviewed: 2026-10-20 · version 1.5.0_
 
 ## What it is
 
@@ -59,7 +59,7 @@ list_sites → test_connection → list_authors / list_categories / list_tags / 
 1. Credentials never appear in tool output, error messages or the debug log (tested).
 2. `create_draft` always forces `status: 'draft'`; `status` is not an accepted argument.
 3. `publish_post` needs `confirm_publish: true`, and `schedule_post` needs `confirm_schedule: true`. Both need `confirm_title` equal to the current title (whitespace-normalised). `publish_post` refuses future-dated posts and anything not `draft`/`pending`. `schedule_post` needs an explicit-timezone time 2 minutes to 2 years ahead.
-4. `update_draft` only touches `draft`/`pending` posts and pages.
+4. `update_draft` only touches `draft`/`pending`/`future` posts and pages; live (`publish`/`private`) content changes only through `edit_published_post` or `unpublish_post`, which, like `publish_post`, need `confirm_title` plus their own `confirm_*: true` flag.
 5. Site URLs are HTTPS, or `http://` only for local development hosts. No credentials, query, fragment, `/wp-admin` or `/wp-json` in the URL. HTTP redirects are treated as errors.
 6. Calls to the same site run one at a time; `initialize`, `ping` and `tools/list` are answered immediately.
 7. Cancelled queued calls never run; a cancelled active call stops before its next HTTP step.
@@ -67,14 +67,14 @@ list_sites → test_connection → list_authors / list_categories / list_tags / 
 9. `list_authors` never returns email addresses.
 10. Manifest, package.json and `VERSION` agree, and the manifest tool list matches the server's (`npm run lint`, also tested).
 11. A write with `seo` checks the SEO Bridge and an active SEO plugin (OPTIONS) **before** writing anything.
-12. Only `publish_post` and `schedule_post` carry `destructiveHint` (tested).
+12. Only tools that change public content carry `destructiveHint`: `publish_post`, `schedule_post`, `edit_published_post`, `unpublish_post` (tested).
 13. Multi-step writes check everything they can **before** the first write (e.g. the featured-image target before uploading).
 
 ## Conventions
 
 - Readable style: one statement per line, 2-space indent, single quotes, `'use strict'`, short JSDoc on exported functions. `npm run lint` rejects tabs and trailing whitespace. Some older test bodies are still compact; new tests use the readable style.
 - Errors are plain `Error`s with user-facing, actionable messages. They are returned to the client as `isError: true` tool results, not JSON-RPC errors. Name the site, and never echo secrets.
-- When you add a tool, follow [docs/DEVELOPMENT.md#adding-a-tool](docs/DEVELOPMENT.md#adding-a-tool). The `tools.length` assertion is currently 14.
+- When you add a tool, follow [docs/DEVELOPMENT.md#adding-a-tool](docs/DEVELOPMENT.md#adding-a-tool). The `tools.length` assertion is currently 16.
 - When you bump the version: `server/constants.js`, `manifest.json`, `package.json`, the README / User Guide headings, `CHANGELOG.md`.
 - Commit messages: a short summary line, a body, and the co-author trailer used in the history.
 
@@ -94,7 +94,7 @@ npm run pack
 
 ## Known limits (by design, today)
 
-No custom post types, unscheduling, deletion, upload from URL, image resizing, SEO fields beyond title/description/focus keyword, or more than 5 sites. Markdown output is HTML (a Classic block), not native block markup. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
+No custom post types, deletion, upload from URL, image resizing, SEO fields beyond title/description/focus keyword, or more than 5 sites. Markdown output is HTML (a Classic block), not native block markup. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 
 ## Verification status
 

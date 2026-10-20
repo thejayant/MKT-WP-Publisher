@@ -1,8 +1,8 @@
 # MKT WP Publisher
 
-**Version 1.4.0 · Developed by Jayant**
+**Version 1.5.0 · Developed by Jayant**
 
-A Claude Desktop extension that lets Claude draft, schedule and publish blog posts and pages on **up to five WordPress websites**. Each website has its own login (WordPress Application Password) and its own local blog image folder. Content is always created as a draft first, and publishing or scheduling needs your explicit approval.
+A Claude Desktop extension that lets Claude draft, schedule, publish and edit blog posts and pages on **up to five WordPress websites**. Each website has its own login (WordPress Application Password) and its own local blog image folder. Content is always created as a draft first. Publishing, scheduling, editing a live post and unpublishing each need your explicit approval.
 
 ## What it can do
 
@@ -18,20 +18,22 @@ A Claude Desktop extension that lets Claude draft, schedule and publish blog pos
 | `upload_image` | Uploads a PNG, JPG, WebP, GIF or AVIF from that website's image folder (content is checked first), returns ready-to-paste HTML, and can set it as a draft's featured image. |
 | `create_term` | Creates a category or tag, reusing an existing one with the same name. |
 | `create_draft` | Creates a draft post or page: title, content (HTML or Markdown), slug, excerpt, categories, tags, featured image, author, SEO fields. |
-| `update_draft` | Changes a draft or pending post or page. |
-| `publish_post` | Publishes a draft now, only with approval and the exact title. |
+| `update_draft` | Changes a draft, pending or scheduled post or page (a scheduled post keeps its time). |
+| `edit_published_post` | Changes a live post or page (content, images, SEO title and description, slug, date), only with approval and the exact current title. |
+| `publish_post` | Publishes a draft now, or with a back date, only with approval and the exact title. |
+| `unpublish_post` | Moves a published or scheduled post back to draft (also unschedules), only with approval and the exact title. |
 | `schedule_post` | Schedules a draft for a set date and time, only with approval and the exact title. |
 
 Every draft comes with a `preview_url` for review. Reads are retried automatically when a busy host answers "try again later". An optional `expected_modified_gmt` check stops Claude from overwriting changes someone else made in WordPress in the meantime.
 
 **SEO fields** (Yoast SEO or Rank Math: SEO title, meta description, focus keyword) need the small companion plugin **MKT WP Publisher SEO Bridge** installed on each site. See [the user guide](docs/USER_GUIDE.md#seo-fields-yoast-seo--rank-math).
 
-Not included: custom post types, deleting content, unscheduling, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
+Not included: custom post types, deleting content, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 
 ## Quick start
 
 1. **Create an Application Password** in each WordPress site: *Users → Profile → Application Passwords*. Use an **Editor or Administrator** account if you want to credit posts to other authors.
-2. **Install** `mkt-wp-publisher-1.4.0.mcpb` from Claude Desktop's extension settings.
+2. **Install** `mkt-wp-publisher-1.5.0.mcpb` from Claude Desktop's extension settings.
 3. **Fill in Website 1**: name, HTTPS URL (for example `https://example.com`), username, Application Password and blog image folder. Turn on **Enable website 1**. Repeat for Websites 2–5 if you need them.
 4. *(Optional, for SEO fields)* Upload `mkt-wp-publisher-seo-bridge.zip` in each WordPress site under *Plugins → Add New → Upload Plugin*, then activate it.
 5. **Restart the extension**, then ask Claude:
@@ -50,7 +52,11 @@ Not included: custom post types, deleting content, unscheduling, uploading image
 
    > Schedule draft POST_ID titled "Spring Campaign Recap" on website-1 for 2 November 2026 at 09:00 India time. I approve.
 
-> **Team rule:** never set `publish_post` or `schedule_post` to "Always allow" in Claude Desktop. The approval prompt is the only real human check before a post goes live.
+   Later changes to the live post:
+
+   > On website-1, change the featured image of published post POST_ID titled "Spring Campaign Recap" to hero-v2.png and set its meta description to "…". I approve editing the live post.
+
+> **Team rule:** never set `publish_post`, `schedule_post`, `edit_published_post` or `unpublish_post` to "Always allow" in Claude Desktop. The approval prompt is the only real human check before public content changes.
 
 ## Requirements
 

@@ -56,7 +56,7 @@ async function requireSeoPlugin(ctx, route) {
  */
 async function prepareWrite(ctx, args, pc) {
   checkText(args);
-  const {site_id, post_id, post_type, confirm_title, confirm_publish, confirm_schedule, publish_at, content_format, seo, expected_modified_gmt, ...body} = args;
+  const {site_id, post_id, post_type, confirm_title, confirm_publish, confirm_schedule, confirm_edit, confirm_unpublish, publish_at, publish_date, content_format, seo, expected_modified_gmt, ...body} = args;
   if (pc.isPage) {
     for (const key of ['categories', 'tags', 'excerpt']) {
       if (Object.hasOwn(args, key)) throw new Error(key + ' applies to posts only; pages do not have it.');
@@ -98,6 +98,46 @@ async function requireFreeSlug(ctx, pc, slug, ownId) {
   const existing = await ctx.request(pc.route + '?context=edit&slug=' + encodeURIComponent(slug) + '&status=' + ALL_STATUSES);
   const other = existing.find(p => p.id !== ownId);
   if (other) throw new Error('Slug already exists on site ' + ctx.site.site_id + ' at ' + pc.kind + ' ID ' + other.id + '. ' + (ownId ? 'Choose another slug.' : 'Read or update that ' + pc.kind + ' instead.'));
+}
+
+/** Parse an ISO 8601 date-time that carries a timezone; returns epoch ms. */
+function parseZoned(value, name, example) {
+  if (!ISO_WITH_ZONE.test(value) || Number.isNaN(Date.parse(value))) {
+    throw new Error(name + ' must be an ISO 8601 date-time with a timezone, for example ' + example + '.');
+  }
+  return Date.parse(value);
+}
+
+/** A back date (or now) for publishing: not in the future, so WordPress publishes instead of scheduling. */
+function pastDateGmt(value) {
+  const when = parseZoned(value, 'publish_date', '2025-03-01T10:00:00+05:30');
+  if (when > Date.now() + 60000) throw new Error('publish_date must be now or in the past. To publish later, use schedule_post.');
+  if (when < Date.UTC(1990, 0, 1)) throw new Error('publish_date is too far in the past.');
+  // WordPress takes date_gmt without a zone suffix.
+  return new Date(when).toISOString().slice(0, 19);
+}
+
+/** Shared by update_draft and edit_published_post: validate, check status and slug, write, report. */
+async function updateExisting(ctx, args, pc, {statuses, toolName, live}) {
+  const {body, written} = await prepareWrite(ctx, args, pc);
+  if (live && args.publish_date !== undefined) body.date_gmt = pastDateGmt(args.publish_date);
+  if (!Object.keys(body).length) {
+    throw new Error(toolName + ' needs at least one field to change (title, content, slug, excerpt, categories, tags, featured_media, author, parent, seo' + (live ? ', publish_date' : '') + ').');
+  }
+  const current = await readCurrent(ctx, args, pc);
+  if (!statuses.includes(current.status)) {
+    const hint = live ? ' Use update_draft for drafts, pending and scheduled ' + pc.kind + 's.' : ' To change a published ' + pc.kind + ', use edit_published_post.';
+    throw new Error(toolName + ' works on ' + statuses.join('/') + ' ' + pc.kind + 's only; this one is ' + current.status + '.' + hint);
+  }
+  if (live) requireTitle(ctx, args, pc, current);
+  if (body.slug !== undefined && body.slug !== current.slug) await requireFreeSlug(ctx, pc, body.slug, current.id);
+  const out = written(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body}));
+  const warnings = [out.warning];
+  if (body.slug !== undefined && out.slug !== undefined && out.slug !== body.slug) warnings.push('WordPress saved the slug as ' + out.slug + ' instead of ' + body.slug + '.');
+  if (out.status !== undefined && out.status !== current.status) warnings.push('Its status changed from ' + current.status + ' to ' + out.status + '. Check the ' + pc.kind + ' in WordPress.');
+  if (live && body.slug !== undefined && body.slug !== current.slug) warnings.push('The public URL changed; old links to it may break unless the site redirects them.');
+  const warning = warnings.filter(Boolean).join(' ');
+  return ctx.result(warning ? {...out, warning} : out);
 }
 
 function requireTitle(ctx, args, pc, current) {
@@ -148,18 +188,26 @@ module.exports = {
     return ctx.result(written(await ctx.request(pc.route, {method: 'POST', body: {...body, status: 'draft'}})));
   },
 
-  async update_draft(ctx, args) {
+  // Drafts, pending and scheduled posts. A scheduled post keeps its publish time.
+  update_draft: (ctx, args) => updateExisting(ctx, args, postContext(ctx, args), {statuses: ['draft', 'pending', 'future'], toolName: 'update_draft', live: false}),
+
+  // Live posts: changes are public at once, so the current title must be confirmed (like publish_post).
+  edit_published_post: (ctx, args) => updateExisting(ctx, args, postContext(ctx, args), {statuses: ['publish', 'private'], toolName: 'edit_published_post', live: true}),
+
+  async unpublish_post(ctx, args) {
     const pc = postContext(ctx, args);
-    const {body, written} = await prepareWrite(ctx, args, pc);
-    if (!Object.keys(body).length) throw new Error('update_draft needs at least one field to change (title, content, slug, excerpt, categories, tags, featured_media, author, parent, or seo).');
+    await prepareWrite(ctx, args, pc);
     const current = await readCurrent(ctx, args, pc);
-    if (!['draft', 'pending'].includes(current.status)) throw new Error('This tool updates draft or pending ' + pc.kind + 's only.');
-    if (body.slug !== undefined && body.slug !== current.slug) await requireFreeSlug(ctx, pc, body.slug, current.id);
-    const out = written(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body}));
-    if (body.slug !== undefined && out.slug !== undefined && out.slug !== body.slug) {
-      return ctx.result({...out, warning: [out.warning, 'WordPress saved the slug as ' + out.slug + ' instead of ' + body.slug + '.'].filter(Boolean).join(' ')});
+    requireTitle(ctx, args, pc, current);
+    if (current.status === 'draft') return ctx.result(pc.summarize(current));
+    if (!['publish', 'private', 'future', 'pending'].includes(current.status)) {
+      throw new Error('unpublish_post works on published, private, scheduled or pending ' + pc.kind + 's; this one is ' + current.status + '.');
     }
-    return ctx.result(out);
+    const out = pc.summarize(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body: {status: 'draft'}}));
+    const notes = [];
+    if (out.status !== 'draft') notes.push('WordPress returned status ' + out.status + ', not draft. Check the ' + pc.kind + ' in WordPress.');
+    if (current.status === 'future') notes.push('It keeps its future date: use schedule_post to schedule it again, or publish_post with publish_date to publish it now.');
+    return ctx.result({...out, previous_status: current.status, ...(notes.length ? {warning: notes.join(' ')} : {})});
   },
 
   async publish_post(ctx, args) {
@@ -167,16 +215,22 @@ module.exports = {
     await prepareWrite(ctx, args, pc);
     const current = await readCurrent(ctx, args, pc);
     requireTitle(ctx, args, pc, current);
-    if (current.status === 'publish') return ctx.result(pc.summarize(current));
+    if (current.status === 'publish') {
+      if (args.publish_date !== undefined) throw new Error('This ' + pc.kind + ' is already published. To change its date, use edit_published_post with publish_date.');
+      return ctx.result(pc.summarize(current));
+    }
     if (!['draft', 'pending'].includes(current.status)) throw new Error('Only draft or pending ' + pc.kind + 's can be published with this tool.');
+    // publish_date back-dates the post (or sets it to now); without it the post's own date must not be in the future.
+    const date_gmt = args.publish_date !== undefined ? pastDateGmt(args.publish_date) : undefined;
     const dateGmt = current.date_gmt;
     const when = typeof dateGmt === 'string' ? Date.parse(/(?:Z|[+-]\d\d:\d\d)$/.test(dateGmt) ? dateGmt : dateGmt + 'Z') : NaN;
-    if (when > Date.now() + 60000) {
-      throw new Error('Post ' + args.post_id + ' on site ' + ctx.site.site_id + ' has a future date (' + dateGmt + ' GMT), so WordPress would schedule it instead of publishing. Use schedule_post to schedule it for that time, or change or clear its date in WordPress to publish now.');
+    if (date_gmt === undefined && when > Date.now() + 60000) {
+      throw new Error('Post ' + args.post_id + ' on site ' + ctx.site.site_id + ' has a future date (' + dateGmt + ' GMT), so WordPress would schedule it instead of publishing. Use schedule_post to schedule it for that time, or publish_post with publish_date (now or earlier) to publish it now.');
     }
-    const published = pc.summarize(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body: {status: 'publish'}}));
-    if (published.status === 'publish') return ctx.result(published);
-    return ctx.result({...published, warning: 'WordPress returned status ' + published.status + ', not publish. Check the ' + pc.kind + ' in WordPress.'});
+    const published = pc.summarize(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body: {status: 'publish', ...(date_gmt ? {date_gmt} : {})}}));
+    const out = date_gmt ? {...published, published_at_gmt: date_gmt + 'Z'} : published;
+    if (published.status === 'publish') return ctx.result(out);
+    return ctx.result({...out, warning: 'WordPress returned status ' + published.status + ', not publish. Check the ' + pc.kind + ' in WordPress.'});
   },
 
   async schedule_post(ctx, args) {
@@ -184,10 +238,7 @@ module.exports = {
     await prepareWrite(ctx, args, pc);
     const current = await readCurrent(ctx, args, pc);
     requireTitle(ctx, args, pc, current);
-    if (!ISO_WITH_ZONE.test(args.publish_at) || Number.isNaN(Date.parse(args.publish_at))) {
-      throw new Error('publish_at must be an ISO 8601 date-time with a timezone, for example 2026-11-02T09:00:00+05:30 or 2026-11-02T03:30:00Z.');
-    }
-    const when = Date.parse(args.publish_at);
+    const when = parseZoned(args.publish_at, 'publish_at', '2026-11-02T09:00:00+05:30 or 2026-11-02T03:30:00Z');
     if (when < Date.now() + MIN_SCHEDULE_AHEAD_MS) throw new Error('publish_at must be at least 2 minutes in the future. To publish now, use publish_post.');
     if (when > Date.now() + MAX_SCHEDULE_AHEAD_MS) throw new Error('publish_at must be within 2 years.');
     if (!['draft', 'pending', 'future'].includes(current.status)) {

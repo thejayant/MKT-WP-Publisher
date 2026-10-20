@@ -1,4 +1,4 @@
-# MKT WP Publisher 1.4.0 — User Guide
+# MKT WP Publisher 1.5.0 — User Guide
 
 Developed by Jayant.
 
@@ -6,7 +6,7 @@ Configure up to five WordPress websites using ordinary extension fields. Each we
 
 ## Install and configure
 
-Install mkt-wp-publisher-1.4.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
+Install mkt-wp-publisher-1.5.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
 
 Open the extension settings and fill the labeled Website 1 group:
 
@@ -23,7 +23,7 @@ To add another website, fill and enable Website 2. Repeat for Website 3, 4, and 
 
 These are labeled field groups in the native settings, not custom collapsible panels. All five groups may be visible. The documented MCPB settings format supports fields, checkboxes, and folder pickers; it does not provide a dynamic Add Website button or conditional section rendering. The host controls their presentation. [MCPB settings specification](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md).
 
-Reload/restart the extension after saving settings. Verify version 1.4.0 and fourteen tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
+Reload/restart the extension after saving settings. Verify version 1.5.0 and sixteen tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
 
 ## Separate blog image folders
 
@@ -89,7 +89,33 @@ schedule_post sets a draft to publish automatically at a set time. Give the time
 
 > Schedule draft POST_ID titled "Spring Campaign Recap" on website-1 for 2 November 2026 at 09:00 India time. I approve.
 
-Like publishing, scheduling needs the exact title and your approval. Once scheduled, WordPress publishes the post at that time **without asking again**. Calling schedule_post again moves the time. To cancel, switch the post back to Draft in WordPress.
+Like publishing, scheduling needs the exact title and your approval. Once scheduled, WordPress publishes the post at that time **without asking again**. Calling schedule_post again moves the time.
+
+You can still edit a scheduled post with update_draft (text, images, SEO fields, categories); it keeps its publish time. To cancel the schedule, use unpublish_post, which turns it back into a draft:
+
+> On website-1, change the featured image of scheduled post POST_ID to launch-v2.png. Keep its schedule.
+
+> Unschedule post POST_ID titled "Spring Campaign Recap" on website-1 and keep it as a draft. I approve.
+
+## Back-dating
+
+To publish a post with an earlier date (for example, moving an old article over), give publish_post a past date and time with a timezone:
+
+> Publish draft POST_ID titled "Our 2024 Results" on website-1 with the date 15 March 2025, 10:00 India time. I approve publication.
+
+The date must be now or in the past; for a future time, use scheduling. A draft that already carries a future date can be published right now the same way, by giving the current time.
+
+## Editing published posts
+
+edit_published_post changes a post that is already live: content, title, featured image, categories, tags, author, SEO title, meta description and focus keyword, slug, or its date. Changes are visible immediately, so it needs your approval and the post's **current** title (Claude reads it first with get_post):
+
+> On website-1, for the published post POST_ID titled "Spring Campaign Recap": set the meta title to "Spring Recap 2026 | MKT", the meta description to "Highlights and numbers from our spring campaign.", and use hero-v2.png from the image folder as the featured image. I approve editing the live post.
+
+To swap an image, Claude uploads the new file with upload_image and then points the post at it. Changing the slug changes the post's public address, so old links may break unless your site redirects them. Claude warns you when that happens.
+
+To take a live post offline, use unpublish_post. It becomes a draft again, which you can edit and publish later:
+
+> Unpublish post POST_ID titled "Spring Campaign Recap" on website-1. I approve.
 
 ## Pages
 
@@ -166,7 +192,7 @@ New groups always require their own folder. To return to old settings after disa
 
 ## Tools and responses
 
-list_sites makes no network requests and returns enabled sites' IDs, names, URLs, and configured folders, plus max_sites:5. It never returns credentials. Every other tool requires site_id: test_connection, list_authors, list_categories, list_tags, list_images, list_posts, get_post, upload_image, create_term, create_draft, update_draft, publish_post, and schedule_post. list_images reads only the local folder.
+list_sites makes no network requests and returns enabled sites' IDs, names, URLs, and configured folders, plus max_sites:5. It never returns credentials. Every other tool requires site_id: test_connection, list_authors, list_categories, list_tags, list_images, list_posts, get_post, upload_image, create_term, create_draft, update_draft, edit_published_post, publish_post, unpublish_post, and schedule_post. list_images reads only the local folder.
 
 Website responses use {site_id, site_url, data}. get_post returns a compact post (raw title, content, excerpt, taxonomy, dates, preview_url); pass full:true for the complete WordPress record. list_categories and list_tags return data as {items, page, total, total_pages, has_more}, 100 compact items per page (full:true for complete term objects); list_posts uses the same shape with 50 per page; when has_more is true, call again with the next page. total and total_pages come from WordPress headers and are omitted if the site does not send them. test_connection confirms authentication and reports capability flags; it does not exercise write endpoints.
 
@@ -178,7 +204,7 @@ publish_post refuses a draft whose date is in the future, because WordPress woul
 
 ### Team rule: keep publish approval manual
 
-In Claude Desktop, never set publish_post or schedule_post (or the extension as a whole) to always allow. The per-call approval prompt is the only real human check before a post goes live. Allowing create_term, create_draft, update_draft, upload_image, and the read tools without prompts is fine.
+In Claude Desktop, never set publish_post, schedule_post, edit_published_post or unpublish_post (or the extension as a whole) to always allow. The per-call approval prompt is the only real human check before public content changes. Allowing create_term, create_draft, update_draft, upload_image, and the read tools without prompts is fine.
 
 Calls to the same website run one at a time; different websites are handled in parallel, so a slow upload to one site does not hold up another. initialize, ping, and tools/list are answered immediately.
 
@@ -190,7 +216,7 @@ After a timeout, cancellation, or unreadable write response, inspect the selecte
 
 The extension uses local stdio and outbound HTTPS with redirect rejection (plain http only for local development sites such as localhost, *.local or *.test). No network listener, tunnel, AI API key, or npm runtime dependency is needed. The host handles sensitive password storage; credentials reach the local process through environment variables. The computer must be awake for calls.
 
-Custom post types, image generation or resizing, uploads from a URL, custom fields other than SEO, unscheduling and deletion tools are not included. Categories and tags can be created with create_term.
+Custom post types, image generation or resizing, uploads from a URL, custom fields other than SEO, and deletion tools are not included. Categories and tags can be created with create_term.
 
 ## Validation and troubleshooting
 
