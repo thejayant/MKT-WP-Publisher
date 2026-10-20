@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>MKT WP Publisher</title>
+  <desc>An ivory M and coral publishing arrow on a deep navy rounded square.</desc>
+  <rect width="512" height="512" rx="112" fill="#101E32"/>
+  <rect x="1" y="1" width="510" height="510" rx="111" stroke="#26364B" stroke-width="2"/>
+  <path d="M112 384V212L196 316L280 212V384" stroke="#F5F1E8" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M324 188L402 110M338 110H402V174" stroke="#FF765C" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,388 @@
+{
+  "manifest_version": "0.3",
+  "name": "mkt-wp-publisher",
+  "display_name": "MKT WP Publisher",
+  "version": "1.3.0",
+  "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
+  "author": {
+    "name": "Jayant"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
+      "env": {
+        "WP_SITE_URL": "${user_config.site_url}",
+        "WP_USERNAME": "${user_config.username}",
+        "WP_APP_PASSWORD": "${user_config.application_password}",
+        "WP_IMAGE_DIR": "${user_config.image_folder}",
+        "WP_SITES_JSON": "${user_config.sites_json}",
+        "WP_SITE_1_ENABLED": "${user_config.website_1_enabled}",
+        "WP_SITE_1_LABEL": "${user_config.website_1_label}",
+        "WP_SITE_1_URL": "${user_config.website_1_url}",
+        "WP_SITE_1_USERNAME": "${user_config.website_1_username}",
+        "WP_SITE_1_APP_PASSWORD": "${user_config.website_1_application_password}",
+        "WP_SITE_1_IMAGE_DIR": "${user_config.website_1_image_folder}",
+        "WP_SITE_2_ENABLED": "${user_config.website_2_enabled}",
+        "WP_SITE_2_LABEL": "${user_config.website_2_label}",
+        "WP_SITE_2_URL": "${user_config.website_2_url}",
+        "WP_SITE_2_USERNAME": "${user_config.website_2_username}",
+        "WP_SITE_2_APP_PASSWORD": "${user_config.website_2_application_password}",
+        "WP_SITE_2_IMAGE_DIR": "${user_config.website_2_image_folder}",
+        "WP_SITE_3_ENABLED": "${user_config.website_3_enabled}",
+        "WP_SITE_3_LABEL": "${user_config.website_3_label}",
+        "WP_SITE_3_URL": "${user_config.website_3_url}",
+        "WP_SITE_3_USERNAME": "${user_config.website_3_username}",
+        "WP_SITE_3_APP_PASSWORD": "${user_config.website_3_application_password}",
+        "WP_SITE_3_IMAGE_DIR": "${user_config.website_3_image_folder}",
+        "WP_SITE_4_ENABLED": "${user_config.website_4_enabled}",
+        "WP_SITE_4_LABEL": "${user_config.website_4_label}",
+        "WP_SITE_4_URL": "${user_config.website_4_url}",
+        "WP_SITE_4_USERNAME": "${user_config.website_4_username}",
+        "WP_SITE_4_APP_PASSWORD": "${user_config.website_4_application_password}",
+        "WP_SITE_4_IMAGE_DIR": "${user_config.website_4_image_folder}",
+        "WP_SITE_5_ENABLED": "${user_config.website_5_enabled}",
+        "WP_SITE_5_LABEL": "${user_config.website_5_label}",
+        "WP_SITE_5_URL": "${user_config.website_5_url}",
+        "WP_SITE_5_USERNAME": "${user_config.website_5_username}",
+        "WP_SITE_5_APP_PASSWORD": "${user_config.website_5_application_password}",
+        "WP_SITE_5_IMAGE_DIR": "${user_config.website_5_image_folder}"
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "user_config": {
+    "website_1_enabled": {
+      "type": "boolean",
+      "title": "Enable website 1",
+      "description": "Turn on Website 1 after filling its URL, credentials, and blog image folder. Leave unused websites disabled.",
+      "required": false,
+      "default": false
+    },
+    "website_1_label": {
+      "type": "string",
+      "title": "Website 1 | Website name",
+      "description": "Friendly name shown to Claude. Its fixed site ID is website-1.",
+      "required": false,
+      "default": ""
+    },
+    "website_1_url": {
+      "type": "string",
+      "title": "Website 1 | WordPress URL",
+      "description": "Canonical HTTPS WordPress installation URL, without /wp-admin or /wp-json.",
+      "required": false,
+      "default": ""
+    },
+    "website_1_username": {
+      "type": "string",
+      "title": "Website 1 | WordPress username",
+      "description": "WordPress account for this website.",
+      "required": false,
+      "default": ""
+    },
+    "website_1_application_password": {
+      "type": "string",
+      "title": "Website 1 | Application Password",
+      "description": "Application Password generated on this website. Enter it here, not in chat.",
+      "required": false,
+      "default": "",
+      "sensitive": true
+    },
+    "website_1_image_folder": {
+      "type": "directory",
+      "title": "Website 1 | Blog image folder",
+      "description": "Select this website's local blog image folder. Required when this website is enabled.",
+      "required": false
+    },
+    "website_2_enabled": {
+      "type": "boolean",
+      "title": "Enable website 2",
+      "description": "Turn on Website 2 after filling its URL, credentials, and blog image folder. Leave unused websites disabled.",
+      "required": false,
+      "default": false
+    },
+    "website_2_label": {
+      "type": "string",
+      "title": "Website 2 | Website name",
+      "description": "Friendly name shown to Claude. Its fixed site ID is website-2.",
+      "required": false,
+      "default": ""
+    },
+    "website_2_url": {
+      "type": "string",
+      "title": "Website 2 | WordPress URL",
+      "description": "Canonical HTTPS WordPress installation URL, without /wp-admin or /wp-json.",
+      "required": false,
+      "default": ""
+    },
+    "website_2_username": {
+      "type": "string",
+      "title": "Website 2 | WordPress username",
+      "description": "WordPress account for this website.",
+      "required": false,
+      "default": ""
+    },
+    "website_2_application_password": {
+      "type": "string",
+      "title": "Website 2 | Application Password",
+      "description": "Application Password generated on this website. Enter it here, not in chat.",
+      "required": false,
+      "default": "",
+      "sensitive": true
+    },
+    "website_2_image_folder": {
+      "type": "directory",
+      "title": "Website 2 | Blog image folder",
+      "description": "Select this website's local blog image folder. Required when this website is enabled.",
+      "required": false
+    },
+    "website_3_enabled": {
+      "type": "boolean",
+      "title": "Enable website 3",
+      "description": "Turn on Website 3 after filling its URL, credentials, and blog image folder. Leave unused websites disabled.",
+      "required": false,
+      "default": false
+    },
+    "website_3_label": {
+      "type": "string",
+      "title": "Website 3 | Website name",
+      "description": "Friendly name shown to Claude. Its fixed site ID is website-3.",
+      "required": false,
+      "default": ""
+    },
+    "website_3_url": {
+      "type": "string",
+      "title": "Website 3 | WordPress URL",
+      "description": "Canonical HTTPS WordPress installation URL, without /wp-admin or /wp-json.",
+      "required": false,
+      "default": ""
+    },
+    "website_3_username": {
+      "type": "string",
+      "title": "Website 3 | WordPress username",
+      "description": "WordPress account for this website.",
+      "required": false,
+      "default": ""
+    },
+    "website_3_application_password": {
+      "type": "string",
+      "title": "Website 3 | Application Password",
+      "description": "Application Password generated on this website. Enter it here, not in chat.",
+      "required": false,
+      "default": "",
+      "sensitive": true
+    },
+    "website_3_image_folder": {
+      "type": "directory",
+      "title": "Website 3 | Blog image folder",
+      "description": "Select this website's local blog image folder. Required when this website is enabled.",
+      "required": false
+    },
+    "website_4_enabled": {
+      "type": "boolean",
+      "title": "Enable website 4",
+      "description": "Turn on Website 4 after filling its URL, credentials, and blog image folder. Leave unused websites disabled.",
+      "required": false,
+      "default": false
+    },
+    "website_4_label": {
+      "type": "string",
+      "title": "Website 4 | Website name",
+      "description": "Friendly name shown to Claude. Its fixed site ID is website-4.",
+      "required": false,
+      "default": ""
+    },
+    "website_4_url": {
+      "type": "string",
+      "title": "Website 4 | WordPress URL",
+      "description": "Canonical HTTPS WordPress installation URL, without /wp-admin or /wp-json.",
+      "required": false,
+      "default": ""
+    },
+    "website_4_username": {
+      "type": "string",
+      "title": "Website 4 | WordPress username",
+      "description": "WordPress account for this website.",
+      "required": false,
+      "default": ""
+    },
+    "website_4_application_password": {
+      "type": "string",
+      "title": "Website 4 | Application Password",
+      "description": "Application Password generated on this website. Enter it here, not in chat.",
+      "required": false,
+      "default": "",
+      "sensitive": true
+    },
+    "website_4_image_folder": {
+      "type": "directory",
+      "title": "Website 4 | Blog image folder",
+      "description": "Select this website's local blog image folder. Required when this website is enabled.",
+      "required": false
+    },
+    "website_5_enabled": {
+      "type": "boolean",
+      "title": "Enable website 5",
+      "description": "Turn on Website 5 after filling its URL, credentials, and blog image folder. Leave unused websites disabled.",
+      "required": false,
+      "default": false
+    },
+    "website_5_label": {
+      "type": "string",
+      "title": "Website 5 | Website name",
+      "description": "Friendly name shown to Claude. Its fixed site ID is website-5.",
+      "required": false,
+      "default": ""
+    },
+    "website_5_url": {
+      "type": "string",
+      "title": "Website 5 | WordPress URL",
+      "description": "Canonical HTTPS WordPress installation URL, without /wp-admin or /wp-json.",
+      "required": false,
+      "default": ""
+    },
+    "website_5_username": {
+      "type": "string",
+      "title": "Website 5 | WordPress username",
+      "description": "WordPress account for this website.",
+      "required": false,
+      "default": ""
+    },
+    "website_5_application_password": {
+      "type": "string",
+      "title": "Website 5 | Application Password",
+      "description": "Application Password generated on this website. Enter it here, not in chat.",
+      "required": false,
+      "default": "",
+      "sensitive": true
+    },
+    "website_5_image_folder": {
+      "type": "directory",
+      "title": "Website 5 | Blog image folder",
+      "description": "Select this website's local blog image folder. Required when this website is enabled.",
+      "required": false
+    },
+    "sites_json": {
+      "type": "string",
+      "title": "Advanced / previous setup | WordPress sites (JSON)",
+      "description": "Optional, for users of earlier JSON setups (max 5 sites). Enabled Website 1-5 sections override this. Each JSON site may include image_folder. New users should use the website sections above.",
+      "sensitive": true,
+      "default": "",
+      "required": false
+    },
+    "site_url": {
+      "type": "string",
+      "title": "Advanced / previous setup | Single-site URL (legacy)",
+      "description": "Optional fallback when WordPress sites JSON is empty. Canonical HTTPS URL.",
+      "default": "",
+      "required": false
+    },
+    "username": {
+      "type": "string",
+      "title": "Advanced / previous setup | Single-site username (legacy)",
+      "description": "Used only when WordPress sites JSON is empty.",
+      "default": "",
+      "required": false
+    },
+    "application_password": {
+      "type": "string",
+      "title": "Advanced / previous setup | Single-site Application Password (legacy)",
+      "description": "Used only when WordPress sites JSON is empty. Enter it here, not in chat.",
+      "sensitive": true,
+      "default": "",
+      "required": false
+    },
+    "image_folder": {
+      "type": "directory",
+      "title": "Advanced / previous setup | Blog image folder",
+      "description": "Fallback only for previous JSON/single-site setup. Website 1-5 sections each use their own required folder.",
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "list_sites",
+      "description": "List named websites and URLs without credentials."
+    },
+    {
+      "name": "test_connection",
+      "description": "Check authentication and post/media capabilities."
+    },
+    {
+      "name": "list_categories",
+      "description": "Read existing categories, with paging."
+    },
+    {
+      "name": "list_authors",
+      "description": "Read people who can be set as a post author."
+    },
+    {
+      "name": "list_tags",
+      "description": "Read existing tags, with paging."
+    },
+    {
+      "name": "list_images",
+      "description": "List images in the website's blog image folder."
+    },
+    {
+      "name": "list_posts",
+      "description": "Find drafts, posts or pages by title or status."
+    },
+    {
+      "name": "get_post",
+      "description": "Read a post or page for review, including SEO fields."
+    },
+    {
+      "name": "upload_image",
+      "description": "Upload a local PNG, JPG, or WebP."
+    },
+    {
+      "name": "create_term",
+      "description": "Create a category or tag (no duplicates)."
+    },
+    {
+      "name": "create_draft",
+      "description": "Create a draft post or page (HTML or Markdown, optional author and SEO fields)."
+    },
+    {
+      "name": "update_draft",
+      "description": "Update a draft post or page, including its author and SEO fields."
+    },
+    {
+      "name": "publish_post",
+      "description": "Publish a draft on explicit request; the title must be confirmed."
+    },
+    {
+      "name": "schedule_post",
+      "description": "Schedule a draft for a future date and time; the title must be confirmed."
+    }
+  ],
+  "icon": "assets/icon.png",
+  "icons": [
+    {
+      "src": "assets/icon-32.png",
+      "size": "32x32"
+    },
+    {
+      "src": "assets/icon-128.png",
+      "size": "128x128"
+    },
+    {
+      "src": "assets/icon.png",
+      "size": "512x512"
+    }
+  ]
+}

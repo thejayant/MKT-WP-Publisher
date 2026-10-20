@@ -1,0 +1,7 @@
+node_modules/
+*.mcpb
+*.zip
+# Real site profiles contain Application Passwords; only the example is tracked.
+sites.json
+.env
+.env.*

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "site-a",
+    "label": "Website A",
+    "site_url": "https://first-website.example",
+    "username": "YOUR_FIRST_SITE_USERNAME",
+    "application_password": "YOUR_FIRST_SITE_APPLICATION_PASSWORD",
+    "image_folder": "C:/BlogImages/Website1"
+  },
+  {
+    "id": "site-b",
+    "label": "Website B",
+    "site_url": "https://second-website.example",
+    "username": "YOUR_SECOND_SITE_USERNAME",
+    "application_password": "YOUR_SECOND_SITE_APPLICATION_PASSWORD",
+    "image_folder": "C:/BlogImages/Website2"
+  }
+]
