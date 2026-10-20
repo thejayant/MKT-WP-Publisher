@@ -22,14 +22,22 @@ jobs:
       - run: npm test
 
   php:
-    name: SEO Bridge plugin (PHP ${{ matrix.php }})
+    name: SEO Bridge plugin on PHP ${{ matrix.php }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        php: ['7.4', '8.3']
+        php: ['7.4', '8.1', '8.3', '8.4']
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
       - run: php -l wordpress-plugin/mkt-wp-publisher-seo-bridge/mkt-wp-publisher-seo-bridge.php
+      # Syntax plus every harness scenario (double load, hostile autoloader, other plugins' filters, bad input, ...).
+      - run: node --test test/seo-bridge-php.test.js
+        env:
+          MKT_PHP: php

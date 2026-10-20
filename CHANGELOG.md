@@ -11,6 +11,15 @@ SEO Bridge plugin, renamed **MKT Publisher SEO Bridge for Yoast & Rank Math**:
 - The REST field reports the bridge version.
 - "Update URI: false", so WordPress never offers an unrelated wordpress.org plugin as an update.
 - Folder name, zip name and REST field (`mkt_seo`) are unchanged, so updating keeps existing installs working.
+- Conflict hardening for other plugins and custom sites:
+  - One guarded class, so loading the plugin twice no longer causes a "Cannot redeclare" fatal error, which 1.0.0 did.
+  - No global variables.
+  - Rank Math detection without autoloading.
+  - Other plugins' `rest_pre_insert` errors pass through untouched.
+  - Echoed-back read-only parts and null are ignored instead of rejected.
+  - Errors inside the bridge's callbacks are caught.
+  - Post types that a site has removed are skipped.
+- PHP test harness (`test/php/bridge-harness.php`, run by `npm test` when PHP is available, and in CI on PHP 7.4/8.1/8.3/8.4). It covers 11 scenarios plus `php -l`, and passed locally on PHP 7.4.33, 8.1.34 and 8.5.11.
 
 Extension:
 - `seo.canonical` (full http/https URL) on create_draft, update_draft and edit_published_post.

@@ -26,6 +26,7 @@
 | `test/media.test.js` | Image folders, traversal, symlinks (skipped where the OS refuses them), content sniffing, featured images |
 | `test/rpc.test.js` | JSON-RPC envelope, cancellation, per-site queues, `structuredContent`/`outputSchema`, tool annotations |
 | `test/markdown.test.js` | The Markdown converter |
+| `test/seo-bridge-php.test.js` | The SEO Bridge PHP plugin: `php -l` plus 11 scenarios in `test/php/bridge-harness.php` (double load, no/one/both SEO plugins, hostile autoloader, other plugins' filters, echoed-back and invalid input, permissions, storage failure, sites without pages, admin page). Needs PHP (`MKT_PHP` or `php` on PATH); skipped otherwise. |
 | `test/helpers.js` | Shared fixtures: `sites`, `env`, `mock()`, `slot()`, `runChild()`, `seoSchema()`, `png()` |
 
 `mock(values)` returns `{calls, f}`. `f` is a fake `fetch` that answers with the next queued value, and records each URL and option in `calls`. `runChild(messages, bootstrap)` runs `server/index.js` as a child process and returns the parsed JSON-RPC replies.

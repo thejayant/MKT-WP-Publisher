@@ -26,6 +26,16 @@ Security:
 * Every value has a maximum length.
 * The plugin never contacts any external service.
 
+Compatibility with other plugins and custom sites:
+
+* Everything lives in one class; a second copy of the plugin (an old folder, or a must-use copy) does nothing instead of causing a fatal error.
+* It only acts on REST requests that contain its own `mkt_seo` field. Saves from the block editor, Classic editor, page builders and other plugins are untouched.
+* Clients that send back a whole post they read (headless sites, sync tools) are never rejected because of this field: read-only parts and empty values are ignored.
+* Errors inside the plugin are caught, so it cannot break other REST responses or the editor.
+* Rank Math is detected without running other plugins' autoloaders.
+* Sites that removed posts or pages are handled.
+* Tested on PHP 7.4, 8.1 and 8.5 with a WordPress stand-in harness; please also test on a staging copy of your site.
+
 == Installation ==
 
 1. In WordPress admin go to **Plugins → Add New → Upload Plugin**.
@@ -55,6 +65,7 @@ The extension can no longer change SEO fields; anything already saved stays in Y
 * New: Tools → MKT SEO Bridge status page, and a Status link on the Plugins screen.
 * The REST field reports the bridge version.
 * "Update URI: false", so WordPress never offers an unrelated wordpress.org plugin as an update.
+* Conflict hardening: guarded class (no "Cannot redeclare" fatal if loaded twice), no global variables, autoloader-safe detection, lenient handling of echoed-back or null values, other plugins' errors passed through, errors inside callbacks caught.
 
 = 1.0.0 =
 * First release: SEO title, meta description and focus keyword for posts and pages.

@@ -45,7 +45,7 @@ for (const key of Object.keys(manifest.user_config)) {
 }
 
 const plugin = path.join(root, 'wordpress-plugin', 'mkt-wp-publisher-seo-bridge', 'mkt-wp-publisher-seo-bridge.php');
-const php = spawnSync('php', ['-l', plugin], {encoding: 'utf8'});
+const php = spawnSync(process.env.MKT_PHP || 'php', ['-l', plugin], {encoding: 'utf8'});
 if (php.error) console.log('php not found: skipped the PHP syntax check of the SEO Bridge plugin.');
 else if (php.status !== 0) problems.push(rel(plugin) + ': ' + (php.stdout + php.stderr).trim());
 
