@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {makeService, tools, VERSION} = require('../server/service.js');
-const {sites, env, mock, runChild, slot, seoSchema} = require('./helpers.js');
+const {sites, env, mock, runChild, slot, seoSchema, png} = require('./helpers.js');
 
 test('active cancellation aborts the read and prevents follow-up publishing POST',async()=>{
  const controller=new AbortController();let count=0;
@@ -31,4 +31,30 @@ test('B8: only publish_post and schedule_post are destructive; update_draft is i
  assert.deepEqual(tools.filter(t=>t.annotations.destructiveHint).map(t=>t.name),['publish_post','schedule_post']);
  assert.equal(a.update_draft.idempotentHint,true);assert.equal(a.create_draft.idempotentHint,false);assert.equal(a.upload_image.idempotentHint,false);assert.equal(a.publish_post.readOnlyHint,false);
  for(const t of tools.filter(t=>t.annotations.readOnlyHint))assert.equal(t.annotations.idempotentHint,true);
+});
+
+test('F15: a slow call on one site does not block another site; calls on one site stay in order', async () => {
+  // site-a answers after 400 ms, site-b at once.
+  const boot = 'Object.assign(process.env,' + JSON.stringify(env) + ');global.fetch=async(u)=>{if(u.includes("a.example"))await new Promise(r=>setTimeout(r,400));return {ok:true,json:async()=>({id:u.includes("a.example")?1:2,capabilities:{}})}}';
+  const call = (id, site_id) => ({jsonrpc: '2.0', id, method: 'tools/call', params: {name: 'test_connection', arguments: {site_id}}});
+  const r = await runChild([call(1, 'site-a'), call(2, 'site-a'), call(3, 'site-b')], boot);
+  assert.deepEqual(r.map(x => x.id), [3, 1, 2]);
+});
+
+test('F16: tool results carry structuredContent matching an outputSchema; errors do not', async () => {
+  for (const t of tools) {
+    assert.equal(t.outputSchema?.type, 'object', t.name + ' has an outputSchema');
+    const required = t.name === 'list_sites' ? ['sites', 'max_sites'] : ['site_id', 'site_url', 'data'];
+    assert.deepEqual(t.outputSchema.required, required);
+  }
+  const r = await runChild([
+    {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'list_sites', arguments: {}}},
+    {jsonrpc: '2.0', id: 2, method: 'tools/call', params: {name: 'get_post', arguments: {}}},
+  ], 'Object.assign(process.env,' + JSON.stringify(env) + ')');
+  const ok = r.find(x => x.id === 1).result;
+  assert.deepEqual(ok.structuredContent, JSON.parse(ok.content[0].text));
+  assert.equal(ok.structuredContent.sites.length, 2);
+  const failed = r.find(x => x.id === 2).result;
+  assert.equal(failed.isError, true);
+  assert(!('structuredContent' in failed));
 });

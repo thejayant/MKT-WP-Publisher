@@ -15,4 +15,6 @@ function slot(n,dir,overrides={}) {
  return Object.fromEntries(Object.entries({ENABLED:'true',LABEL:'Website '+n,URL:'https://site'+n+'.example',USERNAME:'user'+n,APP_PASSWORD:'fake-'+n,IMAGE_DIR:dir,...overrides}).map(([key,value])=>[prefix+key,value]));
 }
 const seoSchema=plugin=>({schema:{properties:{mkt_seo:{properties:{plugin:{enum:[plugin]}}}}}});
-module.exports = {sites, env, mock, runChild, slot, seoSchema};
+// Bytes that pass the PNG content check, followed by a marker so tests can tell files apart.
+const png=(marker='')=>Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),Buffer.from(marker)]);
+module.exports = {sites, env, mock, runChild, slot, seoSchema, png};

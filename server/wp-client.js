@@ -1,7 +1,13 @@
 'use strict';
-// HTTP client for the WordPress REST API: auth, timeouts, cancellation, error messages and the plain-permalink fallback.
+// HTTP client for the WordPress REST API: auth, timeouts, retries, cancellation, error messages,
+// the plain-permalink fallback and the optional debug log.
 
-const REQUEST_TIMEOUT_MS = 60000;
+const DEFAULT_TIMEOUTS = {request: 60000, upload: 180000};
+// Busy shared hosting briefly answers 429/502/503/504. Only reads are retried; a write may already have happened.
+const RETRY_STATUSES = [429, 502, 503, 504];
+const SAFE_METHODS = ['GET', 'OPTIONS'];
+const RETRY_DELAYS_MS = [1000, 3000];
+const MAX_RETRY_AFTER_MS = 10000;
 
 // Extra guidance for WordPress error codes that have a clear fix.
 const HINTS = {
@@ -12,6 +18,27 @@ const HINTS = {
 
 function checkCancelled(signal) {
   if (signal?.aborted) throw new Error('Request cancelled. Check the selected WordPress site before retrying a write; it may already have succeeded.');
+}
+
+/** Wait, but stop early (with the cancellation error) if the caller cancels. */
+function abortableSleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener('abort', done);
+      clearTimeout(timer);
+      if (signal?.aborted) {
+        try {
+          checkCancelled(signal);
+        } catch (error) {
+          reject(error);
+        }
+      } else {
+        resolve();
+      }
+    }
+    signal?.addEventListener('abort', done, {once: true});
+  });
 }
 
 /** The ?rest_route= form of an endpoint, for sites using plain permalinks where /wp-json is not routed. */
@@ -28,82 +55,107 @@ function httpError(status, data) {
   return Object.assign(error, {status, code});
 }
 
+function retryDelay(response, attempt) {
+  const seconds = Number(response.headers?.get?.('Retry-After'));
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+  return RETRY_DELAYS_MS[attempt];
+}
+
 /**
  * Create the request function shared by all tool calls of one server process.
  * It remembers which sites need the plain-permalink URL form.
+ * @param fetcher fetch implementation
+ * @param options {timeouts: {request, upload}, sleep(ms, signal), log(line) or null}
  */
-function createClient(fetcher) {
+function createClient(fetcher, {timeouts = {}, sleep = abortableSleep, log = null} = {}) {
+  const limits = {...DEFAULT_TIMEOUTS, ...timeouts};
   const plainSites = new Set();
 
   /**
    * Send one REST request to a site and return the parsed JSON.
-   * @param site    connection from readSites
-   * @param signal  caller's AbortSignal (tool-call cancellation)
+   * @param site     connection from readSites
+   * @param signal   caller's AbortSignal (tool-call cancellation)
    * @param endpoint path under /wp/v2, with an optional query string
-   * @param options {method, body (object or Buffer), headers, meta (receives total/total_pages)}
+   * @param options  {method, body (object or Buffer), headers, meta (receives total/total_pages), upload (longer timeout)}
    */
-  async function request(site, signal, endpoint, {method = 'GET', body, headers = {}, meta} = {}) {
+  async function request(site, signal, endpoint, {method = 'GET', body, headers = {}, meta, upload = false} = {}) {
     checkCancelled(signal);
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    signal?.addEventListener('abort', abort, {once: true});
-    const timeout = setTimeout(abort, REQUEST_TIMEOUT_MS);
     const isJsonBody = body !== undefined && !Buffer.isBuffer(body);
+    const timeoutMs = upload ? limits.upload : limits.request;
 
+    // One HTTP attempt with its own timeout, linked to the caller's cancellation.
     const send = async url => {
-      let response;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal?.addEventListener('abort', abort, {once: true});
+      const timeout = setTimeout(abort, timeoutMs);
+      const started = Date.now();
       try {
-        response = await fetcher(url, {
-          method,
-          redirect: 'error',
-          signal: controller.signal,
-          headers: {Authorization: site.auth, ...(isJsonBody ? {'Content-Type': 'application/json'} : {}), ...headers},
-          body: body === undefined ? undefined : isJsonBody ? JSON.stringify(body) : body,
-        });
-      } catch {
+        let response;
+        try {
+          response = await fetcher(url, {
+            method,
+            redirect: 'error',
+            signal: controller.signal,
+            headers: {Authorization: site.auth, ...(isJsonBody ? {'Content-Type': 'application/json'} : {}), ...headers},
+            body: body === undefined ? undefined : isJsonBody ? JSON.stringify(body) : body,
+          });
+        } catch {
+          checkCancelled(signal);
+          log?.(site.site_id + ' ' + method + ' ' + endpoint.split('?')[0] + ' failed after ' + (Date.now() - started) + 'ms');
+          throw new Error('Network request failed or timed out. For a write, check the selected WordPress site before retrying; it may have succeeded. Check its canonical HTTPS URL.');
+        }
+        let data;
+        let parsed = true;
+        try {
+          data = await response.json();
+        } catch {
+          parsed = false;
+        }
         checkCancelled(signal);
-        throw new Error('Network request failed or timed out. For a write, check the selected WordPress site before retrying; it may have succeeded. Check its canonical HTTPS URL.');
+        // Path only: query strings can hold search text, and headers/bodies can hold credentials or content.
+        log?.(site.site_id + ' ' + method + ' ' + endpoint.split('?')[0] + ' ' + response.status + (parsed ? '' : ' non-JSON') + ' ' + (Date.now() - started) + 'ms');
+        return {response, data, parsed};
+      } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', abort);
       }
-      let data;
-      let parsed = true;
-      try {
-        data = await response.json();
-      } catch {
-        parsed = false;
-      }
-      checkCancelled(signal);
-      return {response, data, parsed};
     };
 
-    try {
-      let {response, data, parsed} = await send(plainSites.has(site.site_url) ? plainUrl(site, endpoint) : site.base + endpoint);
-      // With plain permalinks /wp-json is not routed: WordPress answers with its HTML 404 page and processes nothing,
-      // so retrying once via ?rest_route= is safe even for writes.
-      if (!response.ok && !parsed && response.status === 404 && !plainSites.has(site.site_url)) {
-        const retry = await send(plainUrl(site, endpoint));
-        if (retry.parsed) {
-          plainSites.add(site.site_url);
-          ({response, data, parsed} = retry);
-        }
+    const sendWithRetry = async url => {
+      let attempt = await send(url);
+      for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
+        if (!SAFE_METHODS.includes(method) || !RETRY_STATUSES.includes(attempt.response.status)) break;
+        await sleep(retryDelay(attempt.response, i), signal);
+        attempt = await send(url);
       }
-      if (!response.ok && !parsed) {
-        throw Object.assign(new Error('WordPress HTTP ' + response.status + ' returned a non-JSON page instead of a REST API error. A firewall, CDN (such as Cloudflare), hosting security rule, or security plugin may be blocking the request. For a write, check the selected site before retrying; it may have succeeded.'), {status: response.status});
+      return attempt;
+    };
+
+    let {response, data, parsed} = await sendWithRetry(plainSites.has(site.site_url) ? plainUrl(site, endpoint) : site.base + endpoint);
+    // With plain permalinks /wp-json is not routed: WordPress answers with its HTML 404 page and processes nothing,
+    // so retrying once via ?rest_route= is safe even for writes.
+    if (!response.ok && !parsed && response.status === 404 && !plainSites.has(site.site_url)) {
+      const retry = await sendWithRetry(plainUrl(site, endpoint));
+      if (retry.parsed) {
+        plainSites.add(site.site_url);
+        ({response, data, parsed} = retry);
       }
-      if (!parsed) {
-        throw new Error('WordPress returned an unreadable response (HTTP ' + response.status + '). A firewall or security plugin may be altering REST API responses. For a write, check the selected site before retrying; it may have succeeded.');
-      }
-      if (!response.ok) throw httpError(response.status, data);
-      if (meta) {
-        for (const [key, header] of [['total', 'X-WP-Total'], ['total_pages', 'X-WP-TotalPages']]) {
-          const n = Number(response.headers?.get?.(header));
-          if (Number.isSafeInteger(n) && n >= 0) meta[key] = n;
-        }
-      }
-      return data;
-    } finally {
-      clearTimeout(timeout);
-      signal?.removeEventListener('abort', abort);
     }
+    if (!response.ok && !parsed) {
+      throw Object.assign(new Error('WordPress HTTP ' + response.status + ' returned a non-JSON page instead of a REST API error. A firewall, CDN (such as Cloudflare), hosting security rule, or security plugin may be blocking the request. For a write, check the selected site before retrying; it may have succeeded.'), {status: response.status});
+    }
+    if (!parsed) {
+      throw new Error('WordPress returned an unreadable response (HTTP ' + response.status + '). A firewall or security plugin may be altering REST API responses. For a write, check the selected site before retrying; it may have succeeded.');
+    }
+    if (!response.ok) throw httpError(response.status, data);
+    if (meta) {
+      for (const [key, header] of [['total', 'X-WP-Total'], ['total_pages', 'X-WP-TotalPages']]) {
+        const n = Number(response.headers?.get?.(header));
+        if (Number.isSafeInteger(n) && n >= 0) meta[key] = n;
+      }
+    }
+    return data;
   }
 
   return {request, usesPlainPermalinks: site => plainSites.has(site.site_url)};

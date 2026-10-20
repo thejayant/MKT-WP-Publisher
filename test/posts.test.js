@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {makeService, tools, VERSION} = require('../server/service.js');
-const {sites, env, mock, runChild, slot, seoSchema} = require('./helpers.js');
+const {sites, env, mock, runChild, slot, seoSchema, png} = require('./helpers.js');
 
 test('draft creation strips routing fields and forces draft, rejecting injected status',async()=>{
  const m=mock([[],{id:1,status:'draft'}]);const call=makeService(env,m.f);
@@ -102,4 +102,44 @@ test('F12: content_format markdown is converted before sending; html is untouche
  assert.equal(JSON.parse(m.calls[1].o.body).content,'<h2>Hello</h2>\n<p>Some <strong>bold</strong> text.</p>');assert(!('content_format' in JSON.parse(m.calls[1].o.body)));
  await call('update_draft',{site_id:'site-a',post_id:60,content_format:'html',content:'**raw**'});assert.equal(JSON.parse(m.calls[3].o.body).content,'**raw**');
  await assert.rejects(call('update_draft',{site_id:'site-a',post_id:60,content_format:'markdown'}),/content_format needs content/);
+});
+
+test('B9: update_draft checks a new slug against other posts and warns if WordPress changes it', async () => {
+  const draft = {id: 8, status: 'draft', slug: 'old-slug', title: {raw: 'T'}};
+
+  const taken = mock([draft, [{id: 12, slug: 'taken'}]]);
+  await assert.rejects(makeService(env, taken.f)('update_draft', {site_id: 'site-a', post_id: 8, slug: 'taken'}), /Slug already exists on site site-a at post ID 12\. Choose another slug/);
+  assert(taken.calls.every(c => c.o.method === 'GET'));
+  assert.match(taken.calls[1].u, /\/posts\?context=edit&slug=taken&status=/);
+
+  const same = mock([draft, {...draft}]);
+  await makeService(env, same.f)('update_draft', {site_id: 'site-a', post_id: 8, slug: 'old-slug', title: 'New'});
+  assert.equal(same.calls.length, 2, 'unchanged slug needs no lookup');
+
+  const renamed = mock([draft, [{id: 8, slug: 'fresh'}], {...draft, slug: 'fresh-2'}]);
+  const r = await makeService(env, renamed.f)('update_draft', {site_id: 'site-a', post_id: 8, slug: 'fresh'});
+  assert.match(r.data.warning, /saved the slug as fresh-2 instead of fresh/);
+});
+
+test('F13: expected_modified_gmt refuses writes when the post changed since it was read', async () => {
+  const current = {id: 5, status: 'draft', title: {raw: 'T'}, modified_gmt: '2026-10-20T10:00:00'};
+  const changed = mock([current]);
+  await assert.rejects(
+    makeService(env, changed.f)('update_draft', {site_id: 'site-a', post_id: 5, title: 'X', expected_modified_gmt: '2026-10-20T09:59:00'}),
+    /changed since you read it \(modified_gmt is now 2026-10-20T10:00:00\).*nothing was written/,
+  );
+  assert.equal(changed.calls.length, 1);
+
+  for (const stamp of ['2026-10-20T10:00:00', '2026-10-20T10:00:00Z', '2026-10-20T10:00:00+00:00']) {
+    const m = mock([current, {...current, status: 'publish'}]);
+    const r = await makeService(env, m.f)('publish_post', {site_id: 'site-a', post_id: 5, confirm_title: 'T', confirm_publish: true, expected_modified_gmt: stamp});
+    assert.equal(r.data.status, 'publish');
+  }
+
+  const sched = mock([current]);
+  await assert.rejects(
+    makeService(env, sched.f)('schedule_post', {site_id: 'site-a', post_id: 5, publish_at: new Date(Date.now() + 86400000).toISOString(), confirm_title: 'T', confirm_schedule: true, expected_modified_gmt: '2026-01-01T00:00:00'}),
+    /changed since you read it/,
+  );
+  assert.equal(sched.calls.length, 1);
 });

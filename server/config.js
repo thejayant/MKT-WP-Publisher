@@ -9,6 +9,12 @@ const SLOT_KEYS = ['LABEL', 'URL', 'USERNAME', 'APP_PASSWORD', 'IMAGE_DIR'];
 const PROFILE_KEYS = ['id', 'label', 'site_url', 'username', 'application_password', 'image_folder'];
 const tooMany = () => new Error('A maximum of 5 WordPress websites is supported.');
 
+// Local development hosts (LocalWP, DevKinsta, Docker) may use plain http://; the traffic never leaves the machine or LAN.
+function isLocalDevHost(hostname) {
+  const host = hostname.toLowerCase();
+  return ['localhost', '127.0.0.1', '[::1]'].includes(host) || /\.(?:local|test|localhost)$/.test(host);
+}
+
 function clearPlaceholders(env) {
   return Object.fromEntries(Object.entries(env).map(([key, value]) => [key, typeof value === 'string' && PLACEHOLDER.test(value.trim()) ? '' : value]));
 }
@@ -78,8 +84,9 @@ function toSite(item, index, seen, env) {
   } catch {
     throw new Error(which + ': website URL is invalid.');
   }
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || /\/(?:wp-admin|wp-json)(?:\/|$)/i.test(url.pathname)) {
-    throw new Error(which + ': use the canonical HTTPS website URL without credentials, query, fragment, wp-admin, or wp-json.');
+  const allowedProtocol = url.protocol === 'https:' || (url.protocol === 'http:' && isLocalDevHost(url.hostname));
+  if (!allowedProtocol || url.username || url.password || url.search || url.hash || /\/(?:wp-admin|wp-json)(?:\/|$)/i.test(url.pathname)) {
+    throw new Error(which + ': use the canonical HTTPS website URL without credentials, query, fragment, wp-admin, or wp-json. Plain http:// is allowed only for local development sites (localhost, *.local, *.test, *.localhost).');
   }
   const site_url = url.href.replace(/\/+$/, '');
   return {

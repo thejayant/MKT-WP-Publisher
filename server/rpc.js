@@ -21,8 +21,14 @@ function isValidEnvelope(m) {
  * @param call tool dispatcher from makeService
  */
 function serve(call, {input = process.stdin, output = process.stdout} = {}) {
-  let queue = Promise.resolve();
+  // One queue per site: calls for the same site run one at a time (no concurrent edits to one WordPress),
+  // while a slow upload to one site does not hold up work on another.
+  const queues = new Map();
   const pending = new Map();
+  const queueKey = m => {
+    const siteId = m.params?.arguments?.site_id;
+    return typeof siteId === 'string' ? 'site:' + siteId : 'global';
+  };
   const send = message => output.write(JSON.stringify(message) + '\n');
 
   async function handle(m, task) {
@@ -43,7 +49,8 @@ function serve(call, {input = process.stdin, output = process.stdout} = {}) {
       case 'tools/call':
         try {
           const value = await call(m.params?.name, m.params?.arguments ?? {}, task.controller.signal);
-          return {content: [{type: 'text', text: JSON.stringify(value)}]};
+          // structuredContent matches the tool's outputSchema; the text copy is for clients older than 2025-06-18.
+          return {content: [{type: 'text', text: JSON.stringify(value)}], structuredContent: value};
         } catch (error) {
           return {content: [{type: 'text', text: error.message}], isError: true};
         }
@@ -84,12 +91,15 @@ function serve(call, {input = process.stdin, output = process.stdout} = {}) {
       if (!task.controller.signal.aborted) send({jsonrpc: '2.0', id: m.id, result});
     };
     const immediate = IMMEDIATE.includes(m.method);
-    // Tool calls run one at a time.
-    const done = (immediate ? Promise.resolve() : queue)
+    const key = queueKey(m);
+    const done = (immediate ? Promise.resolve() : queues.get(key) || Promise.resolve())
       .then(run)
       .catch(() => process.stderr.write('Request processing failed.\n'))
-      .finally(() => pending.delete(m.id));
-    if (!immediate) queue = done;
+      .finally(() => {
+        pending.delete(m.id);
+        if (queues.get(key) === done) queues.delete(key);
+      });
+    if (!immediate) queues.set(key, done);
     return undefined;
   });
 }

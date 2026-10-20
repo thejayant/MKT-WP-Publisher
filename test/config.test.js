@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {makeService, tools, VERSION} = require('../server/service.js');
-const {sites, env, mock, runChild, slot, seoSchema} = require('./helpers.js');
+const {sites, env, mock, runChild, slot, seoSchema, png} = require('./helpers.js');
 
 test('legacy config becomes default; populated multi-site config takes precedence',async()=>{
  const legacy={WP_SITE_URL:'https://old.example',WP_USERNAME:'old',WP_APP_PASSWORD:'fake'};

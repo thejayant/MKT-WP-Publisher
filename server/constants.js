@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const MAX_SITES = 5;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const IMAGE_TYPES = {
@@ -8,6 +8,8 @@ const IMAGE_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
 };
 // Lowercase letters and digits in groups joined by single hyphens. Used for site IDs and slugs.
 const SLUG_PATTERN = '^[a-z0-9]+(?:-[a-z0-9]+)*$';

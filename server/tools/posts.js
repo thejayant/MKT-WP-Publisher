@@ -56,7 +56,7 @@ async function requireSeoPlugin(ctx, route) {
  */
 async function prepareWrite(ctx, args, pc) {
   checkText(args);
-  const {site_id, post_id, post_type, confirm_title, confirm_publish, confirm_schedule, publish_at, content_format, seo, ...body} = args;
+  const {site_id, post_id, post_type, confirm_title, confirm_publish, confirm_schedule, publish_at, content_format, seo, expected_modified_gmt, ...body} = args;
   if (pc.isPage) {
     for (const key of ['categories', 'tags', 'excerpt']) {
       if (Object.hasOwn(args, key)) throw new Error(key + ' applies to posts only; pages do not have it.');
@@ -76,6 +76,28 @@ async function prepareWrite(ctx, args, pc) {
     return seo && !p.mkt_seo ? {...out, warning: 'WordPress did not confirm the SEO fields. Check them in WordPress.'} : out;
   };
   return {body, written};
+}
+
+/**
+ * Read the post before a write. With expected_modified_gmt, refuse if someone changed it in WordPress since the
+ * caller read it. This narrows (but cannot close) the gap between this read and the write that follows.
+ */
+async function readCurrent(ctx, args, pc) {
+  const current = await ctx.request(pc.route + '/' + args.post_id + '?context=edit');
+  if (args.expected_modified_gmt !== undefined) {
+    const stamp = text => String(text ?? '').replace(/(?:\.\d+)?(?:Z|\+00:00)$/i, '');
+    if (stamp(args.expected_modified_gmt) !== stamp(current.modified_gmt)) {
+      throw new Error(pc.kind[0].toUpperCase() + pc.kind.slice(1) + ' ' + args.post_id + ' on site ' + ctx.site.site_id + ' changed since you read it (modified_gmt is now ' + current.modified_gmt + '). Read it again with get_post and check the changes with the user; nothing was written.');
+    }
+  }
+  return current;
+}
+
+/** A requested slug must not belong to another post of the same type (WordPress would quietly add -2). */
+async function requireFreeSlug(ctx, pc, slug, ownId) {
+  const existing = await ctx.request(pc.route + '?context=edit&slug=' + encodeURIComponent(slug) + '&status=' + ALL_STATUSES);
+  const other = existing.find(p => p.id !== ownId);
+  if (other) throw new Error('Slug already exists on site ' + ctx.site.site_id + ' at ' + pc.kind + ' ID ' + other.id + '. ' + (ownId ? 'Choose another slug.' : 'Read or update that ' + pc.kind + ' instead.'));
 }
 
 function requireTitle(ctx, args, pc, current) {
@@ -122,8 +144,7 @@ module.exports = {
   async create_draft(ctx, args) {
     const pc = postContext(ctx, args);
     const {body, written} = await prepareWrite(ctx, args, pc);
-    const existing = await ctx.request(pc.route + '?context=edit&slug=' + encodeURIComponent(args.slug) + '&status=' + ALL_STATUSES);
-    if (existing.length) throw new Error('Slug already exists on site ' + ctx.site.site_id + ' at ' + pc.kind + ' ID ' + existing[0].id + '. Read or update that ' + pc.kind + ' instead.');
+    await requireFreeSlug(ctx, pc, args.slug);
     return ctx.result(written(await ctx.request(pc.route, {method: 'POST', body: {...body, status: 'draft'}})));
   },
 
@@ -131,15 +152,20 @@ module.exports = {
     const pc = postContext(ctx, args);
     const {body, written} = await prepareWrite(ctx, args, pc);
     if (!Object.keys(body).length) throw new Error('update_draft needs at least one field to change (title, content, slug, excerpt, categories, tags, featured_media, author, parent, or seo).');
-    const current = await ctx.request(pc.route + '/' + args.post_id + '?context=edit');
+    const current = await readCurrent(ctx, args, pc);
     if (!['draft', 'pending'].includes(current.status)) throw new Error('This tool updates draft or pending ' + pc.kind + 's only.');
-    return ctx.result(written(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body})));
+    if (body.slug !== undefined && body.slug !== current.slug) await requireFreeSlug(ctx, pc, body.slug, current.id);
+    const out = written(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body}));
+    if (body.slug !== undefined && out.slug !== undefined && out.slug !== body.slug) {
+      return ctx.result({...out, warning: [out.warning, 'WordPress saved the slug as ' + out.slug + ' instead of ' + body.slug + '.'].filter(Boolean).join(' ')});
+    }
+    return ctx.result(out);
   },
 
   async publish_post(ctx, args) {
     const pc = postContext(ctx, args);
     await prepareWrite(ctx, args, pc);
-    const current = await ctx.request(pc.route + '/' + args.post_id + '?context=edit');
+    const current = await readCurrent(ctx, args, pc);
     requireTitle(ctx, args, pc, current);
     if (current.status === 'publish') return ctx.result(pc.summarize(current));
     if (!['draft', 'pending'].includes(current.status)) throw new Error('Only draft or pending ' + pc.kind + 's can be published with this tool.');
@@ -156,7 +182,7 @@ module.exports = {
   async schedule_post(ctx, args) {
     const pc = postContext(ctx, args);
     await prepareWrite(ctx, args, pc);
-    const current = await ctx.request(pc.route + '/' + args.post_id + '?context=edit');
+    const current = await readCurrent(ctx, args, pc);
     requireTitle(ctx, args, pc, current);
     if (!ISO_WITH_ZONE.test(args.publish_at) || Number.isNaN(Date.parse(args.publish_at))) {
       throw new Error('publish_at must be an ISO 8601 date-time with a timezone, for example 2026-11-02T09:00:00+05:30 or 2026-11-02T03:30:00Z.');

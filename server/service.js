@@ -18,10 +18,14 @@ const handlers = {
  * Create the tool dispatcher.
  * @param env      settings as environment variables (tests pass their own)
  * @param fetcher  fetch implementation (tests pass a mock)
+ * @param options  {timeouts, sleep, log}: test hooks; log replaces the stderr debug writer
  * @returns async (toolName, args, signal) => result object
  */
-function makeService(env = process.env, fetcher = global.fetch) {
-  const client = createClient(fetcher);
+function makeService(env = process.env, fetcher = global.fetch, options = {}) {
+  // MKT_WP_DEBUG (the "Debug log" setting) writes one line per HTTP request to stderr, which Claude Desktop keeps in its MCP log.
+  const debug = [true, 'true', '1'].includes(env.MKT_WP_DEBUG);
+  const log = debug ? options.log || (line => process.stderr.write('[mkt-wp-publisher] ' + line + '\n')) : null;
+  const client = createClient(fetcher, {timeouts: options.timeouts, sleep: options.sleep, log});
   // State that lives as long as the server process.
   const state = {seoPlugins: new Map()};
 

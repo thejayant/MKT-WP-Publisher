@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {makeService, tools, VERSION} = require('../server/service.js');
-const {sites, env, mock, runChild, slot, seoSchema} = require('./helpers.js');
+const {sites, env, mock, runChild, slot, seoSchema, png} = require('./helpers.js');
 
 test('list_tags and list_categories report paging from WordPress headers',async()=>{
  const calls=[];const headers=h=>({get:k=>h[k]});
