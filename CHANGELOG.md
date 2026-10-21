@@ -11,6 +11,14 @@
   - The result includes `restore.changes`, because WordPress keeps no revisions of custom fields.
 - Both need SEO Bridge 1.3.0. Older bridges get a clear "update the bridge" message, and nothing is changed.
 - README: lists `create_product`, and no longer says creating products is not included.
+- When WordPress refuses a parameter (`rest_invalid_param`), the error now shows WordPress's reason for each parameter, for example "mkt_test_style must be one of: light and dark". It no longer adds the unrelated "check credentials" hint. Found in the live test.
+- Live test on mktwptest.wasmer.app (ACF 6.8.10 free, Bridge 1.3.0), draft page 20 with a test field group (text, WYSIWYG, multi-select, group):
+  - `inspect_fields` listed all 4 fields and the group's 3 sub fields, found by ACF's location rule on that page.
+  - `update_fields` set text, WYSIWYG, select and two group sub fields in one call, with the `expected_modified_gmt` guard. WordPress stored them exactly as sent.
+  - `replace_text` changed one phrase in the WYSIWYG field.
+  - Refused with nothing saved: a select value outside the choices, sent together with a valid change (the valid change was not saved either), and a `javascript:` URL.
+  - All values were then restored from `restore.changes`.
+  - Not covered live: repeaters and flexible content need ACF Pro. They are covered by the PHP harness.
 
 ## SEO Bridge 1.3.0
 

@@ -14,7 +14,18 @@ const HINTS = {
   term_exists: 'A term with that name already exists on this site. Use list_categories or list_tags to find its ID.',
   rest_cannot_edit_others: 'This website\'s connected account cannot credit posts to another author. Connect it with an Editor or Administrator account, or leave author out.',
   rest_invalid_author: 'That author ID is not a user on this website. Use list_authors for this site.',
+  rest_invalid_param: 'WordPress refused the request before saving anything.',
 };
+
+/** For rest_invalid_param, WordPress puts the reason per parameter in data.params (e.g. an SEO Bridge field check). */
+function paramReasons(data) {
+  const params = data?.data?.params;
+  if (!params || typeof params !== 'object') return '';
+  const reasons = Object.entries(params)
+    .filter(([, reason]) => typeof reason === 'string')
+    .map(([name, reason]) => name.replace(/[^a-zA-Z0-9_-]/g, '') + ': ' + reason.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300));
+  return reasons.length ? ' ' + reasons.join(' ').replace(/([^.])$/, '$1.') : '';
+}
 
 function checkCancelled(signal) {
   if (signal?.aborted) throw new Error('Request cancelled. Check the selected WordPress site before retrying a write; it may already have succeeded.');
@@ -70,7 +81,7 @@ function httpError(status, data) {
   const code = typeof data?.code === 'string' ? data.code.replace(/[^a-zA-Z0-9_-]/g, '') : 'error';
   // WordPress's own message, HTML stripped and capped so a verbose page cannot flood the reply.
   const message = typeof data?.message === 'string' ? data.message.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200).replace(/\.$/, '') : '';
-  const error = new Error('WordPress HTTP ' + status + ' (' + code + ')' + (message ? ': ' + message : '') + '. ' + (HINTS[code] || 'Check credentials, role, and security settings.'));
+  const error = new Error('WordPress HTTP ' + status + ' (' + code + ')' + (message ? ': ' + message : '') + '.' + paramReasons(data) + ' ' + (HINTS[code] || 'Check credentials, role, and security settings.'));
   return Object.assign(error, {status, code});
 }
 

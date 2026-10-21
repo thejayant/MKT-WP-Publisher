@@ -138,6 +138,16 @@ test('update_fields: refused before anything is written', async () => {
   await refuse([{path: 'hero_title', value: 'x'}], /in the trash/, {}, {...page(), status: 'trash'});
 });
 
+test('update_fields: the bridge\'s reason for refusing a value is shown (seen live on mktwptest.wasmer.app)', async () => {
+  const refused = {ok: false, status: 400, json: async () => ({code: 'rest_invalid_param', message: 'Invalid parameter(s): mkt_fields', data: {status: 400, params: {mkt_fields: 'mkt_fields.mkt_test_style must be one of: light and dark.'}}})};
+  const values = [bridge, page()];
+  const f = async (u, o) => (o.method === 'POST' ? refused : {ok: true, json: async () => values.shift()});
+  await assert.rejects(
+    makeService(env, f)('update_fields', {site_id: 'site-a', post_type: 'page', post_id: 2549, ...confirm, changes: [{path: 'hero_title', value: 'x'}]}),
+    /HTTP 400 \(rest_invalid_param\): Invalid parameter\(s\): mkt_fields\. mkt_fields: mkt_fields\.mkt_test_style must be one of: light and dark\. WordPress refused the request before saving anything\.$/,
+  );
+});
+
 test('update_fields on a product category: term route, name confirmation, no modified-date guard', async () => {
   const catTax = {slug: 'product_cat', rest_base: 'product_cat', hierarchical: true};
   const termData = {source: 'acf', version: '1.3.0', fields: {bottom_content: {...text('Bottom', 'wysiwyg'), value: '<p>Old</p>'}}, meta: []};
