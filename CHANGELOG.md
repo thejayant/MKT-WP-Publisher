@@ -1,5 +1,12 @@
 # Changelog
 
+## SEO Bridge 1.2.1
+
+- Fix: the SEO field was missing on tags on a live site, where the theme makes tags non-public. Taxonomies are now chosen by "editable in the admin" (`show_ui`) and REST availability, not by `public`. Internal taxonomies stay excluded.
+- Live-tested on mktwptest.wasmer.app with Yoast, using extension 1.7.0 and bridge 1.2.0:
+  - edit_blocks on a block page: heading, paragraph, nested column and ACF block field; an ambiguous match was refused.
+  - update_term on a category: description, SEO title and meta description showed on the live archive page immediately, then were restored.
+
 ## MKT WP Publisher 1.7.0 (with SEO Bridge 1.2.0)
 
 Steps 1–3 of docs/SITE-EDITING-PLAN.md.

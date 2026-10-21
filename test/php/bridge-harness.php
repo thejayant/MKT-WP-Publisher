@@ -92,6 +92,7 @@ function get_post_types( $args = array(), $output = 'names' ) {
 	return array_combine( $all, $all );
 }
 function get_taxonomies( $args = array(), $output = 'names' ) {
+	$GLOBALS['wp']['taxonomy_query'] = $args;
 	$all = $GLOBALS['wp']['taxonomies'] ?? array( 'category', 'post_tag', 'nav_menu', 'post_format' );
 	return array_combine( $all, $all );
 }
@@ -270,7 +271,8 @@ switch ( $scenario ) {
 		foreach ( array( 'attachment', 'nav_menu', 'post_format', 'wp_pattern_category' ) as $type ) {
 			check( ! isset( $GLOBALS['wp']['fields'][ $type ] ), "no field on internal $type" );
 		}
-		check( array( '1.2.0' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
+		check( array( '1.2.1' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
+		check( array( 'show_ui' => true, 'show_in_rest' => true ) === $GLOBALS['wp']['taxonomy_query'], 'taxonomies chosen by show_ui + show_in_rest, not public (tags can be non-public)' );
 		// A product update is saved early, like posts.
 		check( true === rest_update( 9329, array( 'title' => 'Product SEO' ), 'product' ), 'product update ok' );
 		check( 'Product SEO' === ( $GLOBALS['wp']['meta_at_save']['_yoast_wpseo_title'] ?? null ), 'product SEO saved before the product save' );
@@ -350,7 +352,7 @@ switch ( $scenario ) {
 		boot_rest();
 		$schema = field()['schema'];
 		check( array( 'none' ) === $schema['properties']['plugin']['enum'], 'advertises plugin none' );
-		check( array( '1.2.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
+		check( array( '1.2.1' ) === $schema['properties']['version']['enum'], 'advertises version' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 5 ) );
 		check( 'none' === $value['plugin'] && '' === $value['title'], 'get works without an SEO plugin' );
 		check( true === rest_update( 5, array( 'title' => 'T' ) ), 'update is a harmless no-op' );
@@ -377,7 +379,7 @@ switch ( $scenario ) {
 		call_user_func( $cb, array( 'title' => 'Fresh' ), (object) array( 'ID' => 8 ) );
 		check( 'Fresh' === $GLOBALS['wp']['meta'][8]['_yoast_wpseo_title'], 'new post saved by update_callback' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 7 ) );
-		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.2.0' === $value['version'], 'read back' );
+		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.2.1' === $value['version'], 'read back' );
 		break;
 
 	case 'rank-math-with-hostile-autoloader':

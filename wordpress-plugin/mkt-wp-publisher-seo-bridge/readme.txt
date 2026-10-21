@@ -3,7 +3,7 @@ Contributors: jayant
 Tags: seo, yoast, rank math, rest api, claude
 Requires at least: 5.6
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -56,6 +56,12 @@ For existing posts the bridge saves the SEO values just before WordPress saves t
 The extension can no longer change SEO fields; anything already saved stays in Yoast SEO or Rank Math as normal.
 
 == Changelog ==
+
+= 1.2.1 =
+* Fix: SEO fields on tags (and other taxonomies) that a theme marks non-public.
+
+= 1.2.0 =
+* SEO fields on every public post type (products, custom post types) and on categories, tags and product categories, for Yoast SEO and Rank Math.
 
 = 1.1.0 =
 * New name: MKT Publisher SEO Bridge for Yoast & Rank Math. New icon.

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MKT Publisher SEO Bridge for Yoast & Rank Math
  * Description:       Lets the MKT WP Publisher extension for Claude read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO or Rank Math, through the WordPress REST API.
- * Version:           1.2.0
+ * Version:           1.2.1
  * Author:            Jayant
  * Requires at least: 5.6
  * Requires PHP:      7.4
@@ -13,7 +13,7 @@
  *
  * Adds one REST field, "mkt_seo", to every public post type (posts, pages, products, …) and taxonomy
  * (categories, tags, product categories, …), edit context only:
- *   { "plugin": "yoast" | "rank-math" | "none", "version": "1.2.0",
+ *   { "plugin": "yoast" | "rank-math" | "none", "version": "1.2.1",
  *     "title": "", "description": "", "focus_keyword": "", "canonical": "" }
  * Writing it requires permission to edit that post. An empty string removes a value.
  *
@@ -42,7 +42,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 	final class MKT_SEO_Bridge {
 
-		const VERSION     = '1.2.0';
+		const VERSION     = '1.2.1';
 		const FIELD       = 'mkt_seo';
 		const TEXT_DOMAIN = 'mkt-wp-publisher-seo-bridge';
 
@@ -113,9 +113,13 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			return array_values( array_diff( array_values( (array) $types ), array( 'attachment' ) ) );
 		}
 
-		/** Public taxonomies available over the REST API: categories, tags, product categories and tags, custom taxonomies. */
+		/**
+		 * Taxonomies editors manage in the admin and that are available over the REST API: categories, tags, product
+		 * categories and tags, custom taxonomies. Not filtered on "public": some themes make tags non-public to hide tag
+		 * archives, yet editors still edit them (seen on a live site with bridge 1.2.0).
+		 */
 		public static function taxonomies() {
-			$taxonomies = function_exists( 'get_taxonomies' ) ? get_taxonomies( array( 'public' => true, 'show_in_rest' => true ), 'names' ) : array();
+			$taxonomies = function_exists( 'get_taxonomies' ) ? get_taxonomies( array( 'show_ui' => true, 'show_in_rest' => true ), 'names' ) : array();
 			return array_values( array_diff( array_values( (array) $taxonomies ), array( 'nav_menu', 'post_format', 'wp_pattern_category', 'link_category' ) ) );
 		}
 
