@@ -167,3 +167,20 @@ test('create_product: always a draft simple product, full data mapped, SKU and p
   const w = await makeService(env, wrongStatus.f)('create_product', {site_id: 'site-a', name: 'X', regular_price: '100', sku: 'NEW'});
   assert.match(w.data.warning, /not draft/);
 });
+
+test('post types: categories map to product_cat even when product_brand is listed first (seen on directmetalstructures.com)', async () => {
+  const taxes = {
+    product_brand: {slug: 'product_brand', rest_base: 'product_brand', hierarchical: true},
+    product_cat: {slug: 'product_cat', rest_base: 'product_cat', hierarchical: true},
+    product_tag: {slug: 'product_tag', rest_base: 'product_tag', hierarchical: false},
+  };
+  const draft = {id: 19810, type: 'product', status: 'draft', title: {raw: 'T'}, product_cat: [243, 31], product_brand: [], product_tag: []};
+  const m = mock([productType, taxes, productSchema, draft, {...draft, product_cat: [31]}]);
+  const r = await makeService(env, m.f)('update_draft', {site_id: 'site-a', post_type: 'product', post_id: 19810, categories: [31], tags: [5]});
+  assert.deepEqual(JSON.parse(m.calls[4].o.body), {product_cat: [31], product_tag: [5]});
+  assert.deepEqual(r.data.categories, [31]);
+  const custom = mock([{slug: 'locations', rest_base: 'locations'}, {region: {slug: 'region', rest_base: 'regions', hierarchical: true}, location_cat: {slug: 'location_cat', rest_base: 'location-cats', hierarchical: true}}, {schema: {properties: {}}}, [{id: 1, type: 'locations', status: 'draft', title: {raw: 'x'}}]]);
+  await makeService(env, custom.f)('list_posts', {site_id: 'site-a', post_type: 'locations'});
+  const state = custom.calls.length;
+  assert.equal(state, 4);
+});

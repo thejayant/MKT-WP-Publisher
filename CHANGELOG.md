@@ -1,5 +1,10 @@
 # Changelog
 
+## MKT WP Publisher 1.7.2
+
+- Fix: on WooCommerce sites that also have product brands, `categories` on a product were mapped to `product_brand`, because the tool took the first hierarchical taxonomy and WooCommerce lists brands first. It now prefers `product_cat` / `category` (and `product_tag` / `post_tag` for tags), then a `*_cat` / `*_category` / `*_tags` name, and only then the first one. Found in the draft-product test on directmetalstructures.com: an `edit_blocks` response showed `categories: []`. The product's categories themselves were unchanged.
+- Live draft-product test on directmetalstructures.com (nothing published): `create_product` made draft 19810 with full dummy data (prices, SKU, 2 categories, image, 15 attributes, weight, dimensions, block description). A second product with the same SKU was refused. `update_product` changed the sale price. `edit_blocks` changed one list item in the description.
+
 ## MKT WP Publisher 1.7.1
 
 - New `create_product`: creates a simple WooCommerce product as a **draft**. It has no status option, so it cannot publish. It takes name, slug, description, short description, regular/sale price, SKU, stock, weight, dimensions, product categories and tags, images and attributes.

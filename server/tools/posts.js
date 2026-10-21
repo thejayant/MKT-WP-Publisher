@@ -44,7 +44,15 @@ async function resolveType(ctx, slug) {
   const route = '/' + type.rest_base;
   const taxonomies = await ctx.request('/taxonomies?type=' + encodeURIComponent(slug) + '&context=edit');
   const list = Object.values(taxonomies || {}).filter(t => t.rest_base);
-  const pick = hierarchical => (list.find(t => !!t.hierarchical === hierarchical) || {}).rest_base;
+  // Prefer the well-known names: WooCommerce sites can list product_brand (also hierarchical) before product_cat,
+  // so "first hierarchical taxonomy" would point categories at brands.
+  const pick = hierarchical => {
+    const kind = list.filter(t => !!t.hierarchical === hierarchical);
+    const known = hierarchical ? ['product_cat', 'category'] : ['product_tag', 'post_tag'];
+    const pattern = hierarchical ? /(?:^|_)(?:cat|category|categories)$/ : /(?:^|_)tags?$/;
+    const best = kind.find(t => known.includes(t.slug)) || kind.find(t => pattern.test(t.slug || '')) || kind[0];
+    return best && best.rest_base;
+  };
   const schema = await ctx.request(route, {method: 'OPTIONS'});
   const resolved = {
     slug,
