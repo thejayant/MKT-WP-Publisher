@@ -7,6 +7,8 @@
 - Live-tested on mktwptest.wasmer.app with Yoast, using extension 1.7.0 and bridge 1.2.0:
   - edit_blocks on a block page: heading, paragraph, nested column and ACF block field; an ambiguous match was refused.
   - update_term on a category: description, SEO title and meta description showed on the live archive page immediately, then were restored.
+  - edit_blocks on a published page: the public page showed the new sentence immediately with the other blocks intact; the page was then unpublished (it returns 404 publicly).
+  - Bridge 1.2.2 verified live: posts, pages, categories and tags all expose the SEO field.
 
 ## MKT WP Publisher 1.7.0 (with SEO Bridge 1.2.0)
 
