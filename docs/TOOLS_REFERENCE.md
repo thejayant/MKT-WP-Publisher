@@ -285,10 +285,10 @@ Any taxonomy: `category`, `post_tag`, `product_cat`, `product_tag`, or custom. `
 ## create_product
 Write, **always as a draft**. There is no status argument, so it cannot publish.
 
-- Args:  and  (required), plus , , , , , , ,  (needs ), , ,  (product_cat IDs), ,  (media IDs, the first is the main image) and . Attributes are plain product attributes, not variations.
-- Checked before anything is created: the SKU must be unused (), and the sale price must be below the regular price.
-- Sends  with .
-- Returns the product summary plus , and a  if WooCommerce returns any status other than draft.
+- Args: `name` and `regular_price` (required), plus `slug`, `description`, `short_description`, `sale_price`, `sku`, `stock_status`, `manage_stock`, `stock_quantity` (needs `manage_stock: true`), `weight`, `dimensions {length, width, height}`, `categories` (product_cat IDs), `tags`, `images` (media IDs, the first is the main image) and `attributes [{name, options[], visible?}]`. Attributes are plain product attributes, not variations.
+- Checked before anything is created: the SKU must be unused (`GET /wc/v3/products?sku=`), and the sale price must be below the regular price.
+- Sends `POST /wc/v3/products` with `{type: "simple", status: "draft", …}`.
+- Returns the product summary plus `preview_url`, and a `warning` if WooCommerce returns any status other than draft.
 
 ## get_product / update_product
 WooCommerce store data, through `wc/v3`. Needs WooCommerce, and an account with the Shop Manager or Administrator role.
