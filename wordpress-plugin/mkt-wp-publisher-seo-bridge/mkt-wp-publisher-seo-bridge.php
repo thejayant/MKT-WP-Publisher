@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MKT Publisher SEO Bridge for Yoast & Rank Math
  * Description:       Lets the MKT WP Publisher extension for Claude read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO or Rank Math, through the WordPress REST API.
- * Version:           1.2.1
+ * Version:           1.2.2
  * Author:            Jayant
  * Requires at least: 5.6
  * Requires PHP:      7.4
@@ -13,7 +13,7 @@
  *
  * Adds one REST field, "mkt_seo", to every public post type (posts, pages, products, …) and taxonomy
  * (categories, tags, product categories, …), edit context only:
- *   { "plugin": "yoast" | "rank-math" | "none", "version": "1.2.1",
+ *   { "plugin": "yoast" | "rank-math" | "none", "version": "1.2.2",
  *     "title": "", "description": "", "focus_keyword": "", "canonical": "" }
  * Writing it requires permission to edit that post. An empty string removes a value.
  *
@@ -42,7 +42,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 	final class MKT_SEO_Bridge {
 
-		const VERSION     = '1.2.1';
+		const VERSION     = '1.2.2';
 		const FIELD       = 'mkt_seo';
 		const TEXT_DOMAIN = 'mkt-wp-publisher-seo-bridge';
 
@@ -115,8 +115,8 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 		/**
 		 * Taxonomies editors manage in the admin and that are available over the REST API: categories, tags, product
-		 * categories and tags, custom taxonomies. Not filtered on "public": some themes make tags non-public to hide tag
-		 * archives, yet editors still edit them (seen on a live site with bridge 1.2.0).
+		 * categories and tags, custom taxonomies. Not filtered on "public", so taxonomies a theme hides from the front end
+		 * stay editable.
 		 */
 		public static function taxonomies() {
 			$taxonomies = function_exists( 'get_taxonomies' ) ? get_taxonomies( array( 'show_ui' => true, 'show_in_rest' => true ), 'names' ) : array();
@@ -145,8 +145,10 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					continue;
 				}
 				add_filter( "rest_pre_insert_{$taxonomy}", array( __CLASS__, 'pre_insert_term' ), 10, 2 );
+				// WordPress's terms controller names the tags schema "tag", not "post_tag", and looks up extra fields by
+				// that name; every other taxonomy uses its own name.
 				register_rest_field(
-					$taxonomy,
+					'post_tag' === $taxonomy ? 'tag' : $taxonomy,
 					self::FIELD,
 					array(
 						'get_callback'    => array( __CLASS__, 'get_term_field' ),

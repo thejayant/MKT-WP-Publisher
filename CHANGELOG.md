@@ -1,8 +1,9 @@
 # Changelog
 
-## SEO Bridge 1.2.1
+## SEO Bridge 1.2.2
 
-- Fix: the SEO field was missing on tags on a live site, where the theme makes tags non-public. Taxonomies are now chosen by "editable in the admin" (`show_ui`) and REST availability, not by `public`. Internal taxonomies stay excluded.
+- Fix: the SEO field was missing on tags. WordPress's terms controller names the tags schema "tag" (not "post_tag") and looks up extra REST fields under that name, so the field is now registered as "tag". Found in the live test on mktwptest.wasmer.app.
+- 1.2.1 chose taxonomies by show_ui + show_in_rest instead of public. That change is kept, but it was not the cause of the tags problem (the 1.2.1 note said it was; that was wrong).
 - Live-tested on mktwptest.wasmer.app with Yoast, using extension 1.7.0 and bridge 1.2.0:
   - edit_blocks on a block page: heading, paragraph, nested column and ACF block field; an ambiguous match was refused.
   - update_term on a category: description, SEO title and meta description showed on the live archive page immediately, then were restored.

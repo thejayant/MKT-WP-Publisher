@@ -3,7 +3,7 @@ Contributors: jayant
 Tags: seo, yoast, rank math, rest api, claude
 Requires at least: 5.6
 Requires PHP: 7.4
-Stable tag: 1.2.1
+Stable tag: 1.2.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -57,8 +57,11 @@ The extension can no longer change SEO fields; anything already saved stays in Y
 
 == Changelog ==
 
+= 1.2.2 =
+* Fix: SEO fields on tags. WordPress looks up extra REST fields for tags under the name "tag", not "post_tag".
+
 = 1.2.1 =
-* Fix: SEO fields on tags (and other taxonomies) that a theme marks non-public.
+* Taxonomies are chosen by show_ui + show_in_rest instead of public. (This did not fix tags; see 1.2.2.)
 
 = 1.2.0 =
 * SEO fields on every public post type (products, custom post types) and on categories, tags and product categories, for Yoast SEO and Rank Math.
