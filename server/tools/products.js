@@ -11,6 +11,7 @@ function summary(p) {
   return {
     product_id: p.id,
     name: p.name,
+    slug: p.slug,
     type: p.type,
     status: p.status,
     permalink: p.permalink,
@@ -23,7 +24,11 @@ function summary(p) {
     manage_stock: p.manage_stock,
     stock_quantity: p.stock_quantity,
     short_description: p.short_description,
+    ...(p.description !== undefined ? {description_length: String(p.description).length} : {}),
+    ...(p.weight ? {weight: p.weight} : {}),
+    ...(p.dimensions && (p.dimensions.length || p.dimensions.width || p.dimensions.height) ? {dimensions: p.dimensions} : {}),
     categories: (p.categories || []).map(c => ({id: c.id, name: c.name})),
+    ...(p.tags && p.tags.length ? {tags: p.tags.map(t => ({id: t.id, name: t.name}))} : {}),
     images: (p.images || []).map(i => ({id: i.id, src: i.src, alt: i.alt})),
     attributes: (p.attributes || []).map(a => ({name: a.name, options: a.options})),
     variations: (p.variations || []).length,
@@ -47,7 +52,58 @@ async function readProduct(ctx, productId) {
 
 const number = value => (value === '' || value === undefined || value === null ? null : Number(value));
 
+/** Product attributes as WooCommerce takes them: [{name, options: [..], visible}]. Not used for variations. */
+function attributesBody(attributes) {
+  return attributes.map((a, i) => {
+    const label = 'attributes[' + i + ']';
+    const extra = Object.keys(a).filter(k => !['name', 'options', 'visible'].includes(k));
+    if (extra.length) throw new Error(label + ' takes name, options and visible only.');
+    if (typeof a.name !== 'string' || !a.name.trim()) throw new Error(label + '.name must be non-empty text.');
+    if (!Array.isArray(a.options) || !a.options.length || a.options.some(o => typeof o !== 'string' || !o.trim())) throw new Error(label + '.options must be a non-empty list of text values.');
+    if (a.visible !== undefined && typeof a.visible !== 'boolean') throw new Error(label + '.visible must be true or false.');
+    return {name: a.name.trim(), options: a.options.map(o => o.trim()), visible: a.visible !== false, variation: false};
+  });
+}
+
 module.exports = {
+  /** New simple product, always as a draft (never published by this tool). */
+  async create_product(ctx, args) {
+    checkText(args);
+    if (!args.name.trim()) throw new Error('name cannot be blank.');
+    const {site_id, categories, tags, images, attributes, dimensions, manage_stock, stock_quantity, ...fields} = args;
+    const regular = number(fields.regular_price);
+    const sale = number(fields.sale_price);
+    if (sale !== null && (regular === null || sale >= regular)) throw new Error('sale_price must be lower than regular_price. Nothing was created.');
+    if (stock_quantity !== undefined && manage_stock !== true) throw new Error('stock_quantity needs manage_stock: true.');
+    const body = {...fields, name: fields.name.trim(), type: 'simple', status: 'draft'};
+    if (categories) body.categories = categories.map(id => ({id}));
+    if (tags) body.tags = tags.map(id => ({id}));
+    if (images) body.images = images.map(id => ({id}));
+    if (attributes) body.attributes = attributesBody(attributes);
+    if (dimensions) body.dimensions = dimensions;
+    if (manage_stock !== undefined) body.manage_stock = manage_stock;
+    if (stock_quantity !== undefined) body.stock_quantity = stock_quantity;
+    if (body.sku) {
+      const same = await ctx.request('/products?sku=' + encodeURIComponent(body.sku) + '&status=any', WC);
+      if (Array.isArray(same) && same.length) throw new Error('SKU ' + body.sku + ' is already used by product ' + same[0].id + ' ("' + decode(same[0].name) + '") on site ' + ctx.site.site_id + '. Choose another SKU. Nothing was created.');
+    }
+    let created;
+    try {
+      created = await ctx.request('/products', {...WC, method: 'POST', body});
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) throw new Error(error.message + ' The connected account needs the Shop Manager or Administrator role on site ' + ctx.site.site_id + '.');
+      throw error;
+    }
+    const out = summary(created);
+    const warnings = [];
+    if (out.status !== 'draft') warnings.push('WooCommerce returned status ' + out.status + ', not draft. Check the product in WordPress now.');
+    return ctx.result({
+      ...out,
+      preview_url: ctx.site.site_url + '/?post_type=product&p=' + created.id + '&preview=true',
+      ...(warnings.length ? {warning: warnings.join(' ')} : {}),
+    });
+  },
+
   async get_product(ctx, args) {
     return ctx.result(summary(await readProduct(ctx, args.product_id)));
   },

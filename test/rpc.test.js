@@ -14,7 +14,7 @@ test('active cancellation aborts the read and prevents follow-up publishing POST
 });
 test('startup discovery and malformed envelope response',async()=>{
  const r=await runChild([{jsonrpc:'2.0',id:0,method:'initialize',params:{protocolVersion:'2025-06-18'}},{jsonrpc:'2.0',method:'notifications/initialized'},{jsonrpc:'2.0',id:1,method:'tools/list'},'null',{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'list_sites',arguments:{}}}]);
- assert.equal(r.find(x=>x.id===0).result.serverInfo.version,VERSION);assert.equal(r.find(x=>x.id===1).result.tools.length,23);assert.equal(r.find(x=>x.id===null).error.code,-32600);assert.equal(r.find(x=>x.id===2).result.isError,true);
+ assert.equal(r.find(x=>x.id===0).result.serverInfo.version,VERSION);assert.equal(r.find(x=>x.id===1).result.tools.length,24);assert.equal(r.find(x=>x.id===null).error.code,-32600);assert.equal(r.find(x=>x.id===2).result.isError,true);
 });
 test('cancelled queued publish never reaches fetch; next queued request still runs',async()=>{
  const boot='Object.assign(process.env,'+JSON.stringify(env)+');global.fetch=async(u,o)=>{if(o.method==="POST"){process.stderr.write("Unexpected write");throw new Error("Unexpected write");}await new Promise(r=>setTimeout(r,60));return {ok:true,json:async()=>({id:1,status:"draft",capabilities:{}})}}';

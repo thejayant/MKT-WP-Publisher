@@ -1,6 +1,6 @@
 {
   "name": "mkt-wp-publisher",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "main": "server/index.js",

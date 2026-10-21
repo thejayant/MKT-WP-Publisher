@@ -128,3 +128,42 @@ test('update_term: name confirmation, slug check, SEO through the bridge with th
   const tag = mock([{...term, id: 3}]);
   await assert.rejects(makeService(env, tag.f)('update_term', {site_id: 'site-a', taxonomy: 'post_tag', term_id: 3, parent: 1, confirm_name: 'x', confirm_edit: true}), /parent applies to hierarchical/);
 });
+
+test('create_product: always a draft simple product, full data mapped, SKU and price checks before writing', async () => {
+  const created = {id: 99999, name: 'TEST Dummy Garage', slug: 'test-dummy-garage', type: 'simple', status: 'draft', regular_price: '5610', sale_price: '4999', sku: 'TEST-1', categories: [{id: 31, name: 'One Car Metal Garages'}], images: [{id: 4048}], attributes: [{name: 'Building Width', options: ['12']}], variations: []};
+  const m = mock([[], created]);
+  const r = await makeService(env, m.f)('create_product', {
+    site_id: 'site-a', name: ' TEST Dummy Garage ', slug: 'test-dummy-garage', description: '<p>Long</p>', short_description: '<p>Short</p>',
+    regular_price: '5610', sale_price: '4999', sku: 'TEST-1', stock_status: 'instock', manage_stock: true, stock_quantity: 3,
+    weight: '1200', dimensions: {length: '25', width: '12', height: '10'}, categories: [243, 31], tags: [5], images: [4048],
+    attributes: [{name: 'Building Width', options: ['12']}, {name: 'Color', options: ['Tan', 'White'], visible: false}],
+  });
+  assert.equal(m.calls[0].u, 'https://a.example/wp-json/wc/v3/products?sku=TEST-1&status=any');
+  assert.equal(m.calls[1].u, 'https://a.example/wp-json/wc/v3/products');
+  const body = JSON.parse(m.calls[1].o.body);
+  assert.equal(body.status, 'draft');
+  assert.equal(body.type, 'simple');
+  assert.equal(body.name, 'TEST Dummy Garage');
+  assert.deepEqual(body.categories, [{id: 243}, {id: 31}]);
+  assert.deepEqual(body.images, [{id: 4048}]);
+  assert.deepEqual(body.attributes[1], {name: 'Color', options: ['Tan', 'White'], visible: false, variation: false});
+  assert.deepEqual(body.dimensions, {length: '25', width: '12', height: '10'});
+  assert.equal(body.stock_quantity, 3);
+  assert.equal(r.data.preview_url, 'https://a.example/?post_type=product&p=99999&preview=true');
+  assert(!r.data.warning);
+
+  await assert.rejects(makeService(env, mock([]).f)('create_product', {site_id: 'site-a', name: 'X', regular_price: '10', status: 'publish'}), /Unknown argument/);
+  const refuse = async (args, re) => {
+    const x = mock([[{id: 7, name: 'Existing'}]]);
+    await assert.rejects(makeService(env, x.f)('create_product', {site_id: 'site-a', name: 'X', regular_price: '100', ...args}), re);
+    assert(x.calls.every(c => c.o.method !== 'POST'), 'nothing created');
+  };
+  await refuse({sku: 'DMS25'}, /SKU DMS25 is already used by product 7/);
+  await refuse({sale_price: '150'}, /lower than regular_price/);
+  await refuse({stock_quantity: 2}, /needs manage_stock: true/);
+  await refuse({attributes: [{name: 'Width'}]}, /options must be a non-empty list/);
+  await refuse({name: '  '}, /name cannot be blank/);
+  const wrongStatus = mock([[], {...created, status: 'publish'}]);
+  const w = await makeService(env, wrongStatus.f)('create_product', {site_id: 'site-a', name: 'X', regular_price: '100', sku: 'NEW'});
+  assert.match(w.data.warning, /not draft/);
+});

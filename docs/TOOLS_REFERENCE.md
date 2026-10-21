@@ -282,6 +282,14 @@ Any taxonomy: `category`, `post_tag`, `product_cat`, `product_tag`, or custom. `
   - `parent` is only for hierarchical taxonomies.
   - `seo` needs SEO Bridge 1.2.0+ (it's checked with `OPTIONS` before anything is saved). When `seo` is sent, the current name is sent as well, so WordPress runs a normal term save and Yoast/Rank Math refresh their cached data.
 
+## create_product
+Write, **always as a draft**. There is no status argument, so it cannot publish.
+
+- Args:  and  (required), plus , , , , , , ,  (needs ), , ,  (product_cat IDs), ,  (media IDs, the first is the main image) and . Attributes are plain product attributes, not variations.
+- Checked before anything is created: the SKU must be unused (), and the sale price must be below the regular price.
+- Sends  with .
+- Returns the product summary plus , and a  if WooCommerce returns any status other than draft.
+
 ## get_product / update_product
 WooCommerce store data, through `wc/v3`. Needs WooCommerce, and an account with the Shop Manager or Administrator role.
 

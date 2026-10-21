@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mkt-wp-publisher",
   "display_name": "MKT WP Publisher",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "author": {
     "name": "Jayant"
@@ -404,6 +404,10 @@
     {
       "name": "schedule_post",
       "description": "Schedule a draft for a future date and time; the title must be confirmed."
+    },
+    {
+      "name": "create_product",
+      "description": "Create a new WooCommerce product as a draft (never published), with price, SKU, attributes and images."
     },
     {
       "name": "get_product",

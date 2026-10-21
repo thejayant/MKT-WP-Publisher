@@ -1,5 +1,13 @@
 # Changelog
 
+## MKT WP Publisher 1.7.1
+
+- New `create_product`: creates a simple WooCommerce product as a **draft**. It has no status option, so it cannot publish. It takes name, slug, description, short description, regular/sale price, SKU, stock, weight, dimensions, product categories and tags, images and attributes.
+  - The SKU must be unused, and the sale price must be below the regular price; both are checked before anything is created.
+  - It returns a preview link, and warns if WooCommerce returns any status other than draft.
+- `get_product` also shows slug, weight, dimensions, tags and the description length.
+- Verified live on directmetalstructures.com: WooCommerce's `wc/v3` API accepts the Application Password (get_product on product 2745), the `product` post type resolves, and `product_cat` lists 40 categories.
+
 ## SEO Bridge 1.2.2
 
 - Fix: the SEO field was missing on tags. WordPress's terms controller names the tags schema "tag" (not "post_tag") and looks up extra REST fields under that name, so the field is now registered as "tag". Found in the live test on mktwptest.wasmer.app.
