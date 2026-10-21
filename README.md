@@ -26,6 +26,8 @@ A Claude Desktop extension that lets Claude draft, schedule, publish and edit bl
 | `list_blocks` / `edit_blocks` | Shows a page's blocks, then changes text in one block (or one ACF block field) and keeps everything else exactly as stored, with a before/after diff. |
 | `list_terms` / `get_term` / `update_term` | Lists, reads and edits categories, tags and WooCommerce product categories: name, description, slug, parent, SEO. |
 | `get_product` / `update_product` | Reads and changes WooCommerce store data: price, sale price, SKU, stock, short description, categories, gallery. |
+| `create_product` | Creates a simple WooCommerce product, always as a draft. |
+| `inspect_fields` / `update_fields` | Lists and changes the custom fields (Advanced Custom Fields, and meta keys the site allows) of a page, product or category, one value at a time, including a single row inside a repeater or flexible content field. Needs SEO Bridge 1.3. |
 
 The post tools work on any post type the site offers: posts, pages, WooCommerce products (`product`) and custom types such as `locations`.
 
@@ -33,7 +35,9 @@ Every draft comes with a `preview_url` for review. Reads are retried automatical
 
 **SEO fields** (Yoast SEO or Rank Math: SEO title, meta description, focus keyword, canonical URL) need the small companion plugin **MKT Publisher SEO Bridge for Yoast & Rank Math** installed on each site. See [the user guide](docs/USER_GUIDE.md#seo-fields-yoast-seo--rank-math).
 
-Not included: creating new WooCommerce products, editing ACF custom fields outside blocks (planned, see [docs/SITE-EDITING-PLAN.md](docs/SITE-EDITING-PLAN.md)), deleting content, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
+**Custom fields** (state, city, pricing and financing pages built from ACF fields; product and category extras) need SEO Bridge **1.3.0** or later on the site. See [the user guide](docs/USER_GUIDE.md#custom-fields-acf).
+
+Not included: publishing new products in one step (they are created as drafts), editing theme templates, deleting content, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 
 ## Quick start
 

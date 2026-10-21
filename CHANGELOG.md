@@ -1,5 +1,29 @@
 # Changelog
 
+## MKT WP Publisher 1.8.0
+
+- New **`inspect_fields`**: lists the custom fields of a post, page, product, category or tag. That covers every Advanced Custom Fields field shown on it (type, value, sub fields, flexible content layouts, choices) and the meta keys the site lists as editable. A flat `paths` list gives the path of every value.
+- New **`update_fields`**: changes custom fields by path, for example `hero_title`, `cta.label`, `faqs[1].answer` or `full_page_content[1].2_column_content_row[0].2_column_content_text`.
+  - Each change is a value, a `replace_text`, a row merge, or a whole field (to add or remove rows).
+  - Only the addressed value changes; the rest of the field is sent back exactly as stored.
+  - The title is confirmed, and there is an optional modified-date guard.
+  - Values are type-checked before sending and checked again by the bridge before saving.
+  - The result includes `restore.changes`, because WordPress keeps no revisions of custom fields.
+- Both need SEO Bridge 1.3.0. Older bridges get a clear "update the bridge" message, and nothing is changed.
+- README: lists `create_product`, and no longer says creating products is not included.
+
+## SEO Bridge 1.3.0
+
+- New REST field `mkt_fields` on the same post types and taxonomies as `mkt_seo`.
+  - Reads ACF fields through ACF's own API (`acf_get_field_groups`, `acf_get_fields`, `acf_get_value`, `update_field`), so ACF's location rules decide which fields an item has.
+  - Repeaters, groups and flexible content are returned with sub fields by name and written back by field key.
+- Computed only when a request asks for it (`?mkt_fields=1`, or a write containing it), so the block editor and other REST clients are not slowed down.
+- Every write is checked against the field definitions before anything is saved: unknown fields and sub fields, read-only types (message, tab, clone…), wrong types, choices, media IDs that are not attachments, maximum rows, unknown layouts. If one change fails, none is saved.
+- HTML from accounts without `unfiltered_html` is filtered with `wp_kses_post`.
+- Non-ACF custom fields: an administrator can list meta keys under Tools → MKT SEO Bridge (form with nonce, `manage_options`), or add them with the `mkt_fields_meta_keys` filter. Only text values can be changed. WordPress internal keys (`_wp_…`, `_edit_…`) are always refused.
+- Without ACF, `mkt_fields` reports `source: none`, and only listed meta keys work.
+- PHP harness: 6 new scenarios (read, nested write and refusals, meta keys, terms, storage failure, admin form). All 21 scenarios pass on PHP 7.4.33, 8.1.34 and 8.5.11.
+
 ## MKT WP Publisher 1.7.2
 
 - Fix: on WooCommerce sites that also have product brands, `categories` on a product were mapped to `product_brand`, because the tool took the first hierarchical taxonomy and WooCommerce lists brands first. It now prefers `product_cat` / `category` (and `product_tag` / `post_tag` for tags), then a `*_cat` / `*_category` / `*_tags` name, and only then the first one. Found in the draft-product test on directmetalstructures.com: an `edit_blocks` response showed `categories: []`. The product's categories themselves were unchanged.

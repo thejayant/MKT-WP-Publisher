@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mkt-wp-publisher",
   "display_name": "MKT WP Publisher",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "author": {
     "name": "Jayant"
@@ -392,6 +392,14 @@
     {
       "name": "edit_blocks",
       "description": "Block-safe edit: change text in one block or an ACF block field; the title must be confirmed."
+    },
+    {
+      "name": "inspect_fields",
+      "description": "List the custom fields (ACF and listed meta keys) of a post, page, product or category, with paths for update_fields."
+    },
+    {
+      "name": "update_fields",
+      "description": "Change custom fields by path (one repeater or flexible content row at a time); the title must be confirmed."
     },
     {
       "name": "publish_post",

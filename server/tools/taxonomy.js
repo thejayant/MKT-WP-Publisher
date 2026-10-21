@@ -59,6 +59,9 @@ function termSummary(tax, t) {
 }
 
 module.exports = {
+  // Shared with fields.js.
+  resolveTaxonomy,
+
   async list_terms(ctx, args) {
     const tax = await resolveTaxonomy(ctx, args.taxonomy);
     if (args.parent !== undefined && !tax.hierarchical) throw new Error('parent applies to hierarchical taxonomies (categories) only.');

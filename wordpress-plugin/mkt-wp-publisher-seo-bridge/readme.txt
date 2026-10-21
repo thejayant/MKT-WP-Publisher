@@ -3,7 +3,7 @@ Contributors: jayant
 Tags: seo, yoast, rank math, rest api, claude
 Requires at least: 5.6
 Requires PHP: 7.4
-Stable tag: 1.2.2
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -17,7 +17,9 @@ Yoast SEO and Rank Math keep their SEO fields out of the WordPress REST API, so 
 * change them on drafts, scheduled posts and published posts;
 * read them back for review.
 
-There are no settings. A status page under **Tools → MKT SEO Bridge** shows the detected SEO plugin and the fields the extension can update.
+From version 1.3.0 it also adds a REST field, `mkt_fields`, so the extension can read and change **custom fields**. These are the Advanced Custom Fields shown on a post, page, product or category, including single rows inside repeaters and flexible content. Each value is checked against the field settings before it is saved. The field is only computed for requests that ask for it, so the editor and other plugins are not slowed down.
+
+A status page under **Tools → MKT SEO Bridge** shows the detected SEO plugin, Advanced Custom Fields, and the fields the extension can update. Its only setting is an optional list of meta keys, for custom fields that are not made with Advanced Custom Fields.
 
 Security:
 
@@ -56,6 +58,12 @@ For existing posts the bridge saves the SEO values just before WordPress saves t
 The extension can no longer change SEO fields; anything already saved stays in Yoast SEO or Rank Math as normal.
 
 == Changelog ==
+
+= 1.3.0 =
+* New: custom fields. The `mkt_fields` REST field reads and writes Advanced Custom Fields (free or Pro) on posts, pages, products, categories and tags, including repeaters, groups and flexible content.
+* Every value is checked against its field settings before saving. Unknown and read-only fields are refused, and if any change fails, nothing is saved.
+* Optional list of editable meta keys (Tools → MKT SEO Bridge) for custom fields that are not made with ACF. WordPress internal keys are never editable.
+* Only computed for requests that ask for it.
 
 = 1.2.2 =
 * Fix: SEO fields on tags. WordPress looks up extra REST fields for tags under the name "tag", not "post_tag".

@@ -11,7 +11,7 @@ Each section below says **what WordPress stores and where** (verified unless mar
 | 1. Block-safe edits | Built in 1.7.0 (`list_blocks`, `edit_blocks`) |
 | 2. Products and custom post types | Built in 1.7.0 (`post_type` for any REST type, `get_product`, `update_product`) |
 | 3. Categories | Built in 1.7.0 (`list_terms`, `get_term`, `update_term`) with SEO Bridge 1.2.0 |
-| 4. Custom fields | Planned |
+| 4. Custom fields | Built in 1.8.0 (`inspect_fields`, `update_fields`) with SEO Bridge 1.3.0 (option B, `mkt_fields`) |
 
 ---
 
@@ -138,6 +138,6 @@ Templates such as `state-page.php`, `city-page.php` and `financing-new.php` are 
 | 1. Block-safe edits | DMS states (most important) and About Us; any block page | Nothing | Mocked tests, then one edit + revision restore on mktwptest.wasmer.app |
 | 2. Products and custom post types | Product SEO/price/short description; QSB locations | Bridge 1.2 (for product SEO) | One `GET /wc/v3/products/{id}` per site; a test product edit on staging |
 | 3. Categories | Category name/description/SEO | Bridge 1.2 | Live `<title>` check after a category SEO edit, as in the 1.1.0 test |
-| 4. Custom fields | AMB/AAMB/QSB state, city, pricing, financing; Safeway pages; product and category extras | Bridge 1.2 | `inspect_fields` on one page per template; harness scenarios; one field edit + restore |
+| 4. Custom fields | AMB/AAMB/QSB state, city, pricing, financing; Safeway pages; product and category extras | Bridge 1.3 | `inspect_fields` on one page per template; harness scenarios; one field edit + restore |
 
 Before steps 2–4 on a site: add the site in the extension settings (Website 2–5) with an **Editor or Administrator** Application Password, and install SEO Bridge 1.2. Test on a staging copy first where one exists.

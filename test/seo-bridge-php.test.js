@@ -29,6 +29,12 @@ const SCENARIOS = [
   'term-yoast',
   'term-rank-math',
   'term-permissions-and-conflicts',
+  'fields-acf-read',
+  'fields-acf-write',
+  'fields-meta',
+  'fields-terms',
+  'fields-storage-failure',
+  'fields-admin-meta-keys',
 ];
 
 test('SEO Bridge plugin: PHP syntax', {skip}, () => {

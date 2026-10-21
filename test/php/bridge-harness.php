@@ -130,7 +130,45 @@ function register_rest_field( $type, $name, $args ) {
 	$GLOBALS['wp']['fields'][ $type ][ $name ] = $args;
 }
 function current_user_can( $cap, $id = 0 ) {
+	if ( 'unfiltered_html' === $cap ) {
+		return $GLOBALS['wp']['unfiltered_html'] ?? true;
+	}
 	return $GLOBALS['wp']['can_edit'];
+}
+function get_post_type( $id = null ) {
+	return $GLOBALS['wp']['post_type_of'][ $id ] ?? 'post';
+}
+function wp_kses_post( $text ) {
+	return preg_replace( '#<script\b[^>]*>.*?</script>#is', '', (string) $text );
+}
+function is_email( $email ) {
+	return false !== filter_var( $email, FILTER_VALIDATE_EMAIL ) ? $email : false;
+}
+function wp_unslash( $value ) {
+	return stripslashes( $value );
+}
+function wp_nonce_field( $action ) {
+	echo '<input type="hidden" name="_wpnonce" value="nonce-' . htmlspecialchars( $action ) . '" />';
+}
+function check_admin_referer( $action ) {
+	if ( ( $_POST['_wpnonce'] ?? '' ) !== 'nonce-' . $action ) {
+		throw new RuntimeException( 'nonce check failed' );
+	}
+	return 1;
+}
+class Harness_Exit extends Exception {
+}
+function wp_safe_redirect( $location ) {
+	throw new Harness_Exit( 'redirect ' . $location );
+}
+function wp_die( $message = '', $status = 500 ) {
+	throw new Harness_Exit( 'die ' . $status );
+}
+function esc_textarea( $text ) {
+	return htmlspecialchars( (string) $text, ENT_QUOTES );
+}
+function submit_button( $text = 'Save' ) {
+	echo '<button>' . htmlspecialchars( $text ) . '</button>';
 }
 function get_post_meta( $id, $key, $single = false ) {
 	if ( ! empty( $GLOBALS['wp']['meta_throws'] ) ) {
@@ -257,6 +295,111 @@ function rest_update_term( $term_id, $taxonomy, $raw ) {
 	return call_user_func( field( $taxonomy )['update_callback'], $clean, (object) array( 'term_id' => $term_id, 'taxonomy' => $taxonomy ) );
 }
 
+/** WordPress's flow for an mkt_fields write: validate + sanitize the argument, save the post, then update_callback. */
+function rest_update_fields( $id, $raw, $type = 'post' ) {
+	$field = $GLOBALS['wp']['fields'][ $type ]['mkt_fields'];
+	$args  = $field['schema']['arg_options'];
+	$valid = call_user_func( $args['validate_callback'], $raw, new WP_REST_Request( array( 'id' => $id, 'mkt_fields' => $raw ) ), 'mkt_fields' );
+	if ( is_wp_error( $valid ) ) {
+		return $valid;
+	}
+	$clean  = call_user_func( $args['sanitize_callback'], $raw );
+	$object = 'post' === $type || 'page' === $type || 'product' === $type ? (object) array( 'ID' => $id ) : (object) array( 'term_id' => $id, 'taxonomy' => $type );
+	return call_user_func( $field['update_callback'], $clean, $object );
+}
+
+/** Read mkt_fields as the extension does (?mkt_fields=1), or as any other client does (no parameter). */
+function read_fields( $id, $type = 'post', $ask = true ) {
+	$object = 'post' === $type || 'page' === $type || 'product' === $type ? array( 'id' => $id ) : array( 'id' => $id, 'taxonomy' => $type );
+	return call_user_func( $GLOBALS['wp']['fields'][ $type ]['mkt_fields']['get_callback'], $object, 'mkt_fields', new WP_REST_Request( $ask ? array( 'mkt_fields' => '1' ) : array() ) );
+}
+
+/**
+ * A page field group like the client sites use: simple fields, a group, a repeater, Safeway-style flexible content
+ * with a nested repeater, a read-only message field and a select. Values are stored keyed by field key, as ACF does.
+ */
+function load_acf_page_fixture() {
+	require __DIR__ . '/acf-stubs.php';
+	$GLOBALS['wp']['types']             = array( 'post', 'page' );
+	$GLOBALS['wp']['post_type_of'][2549] = 'page';
+	$GLOBALS['wp']['post_type_of'][77]   = 'attachment';
+	$GLOBALS['wp']['post_type_of'][78]   = 'attachment';
+	$GLOBALS['acf']['groups'][] = array(
+		'match'  => function ( $screen ) {
+			return 'page' === ( $screen['post_type'] ?? '' );
+		},
+		'fields' => array(
+			array( 'key' => 'field_title', 'name' => 'hero_title', 'label' => 'Hero title', 'type' => 'text' ),
+			array( 'key' => 'field_intro', 'name' => 'intro', 'label' => 'Intro', 'type' => 'wysiwyg' ),
+			array( 'key' => 'field_img', 'name' => 'hero_image', 'label' => 'Hero image', 'type' => 'image' ),
+			array( 'key' => 'field_note', 'name' => 'note', 'label' => 'Note', 'type' => 'message' ),
+			array( 'key' => 'field_style', 'name' => 'style', 'label' => 'Style', 'type' => 'select', 'choices' => array( 'light' => 'Light', 'dark' => 'Dark' ) ),
+			array(
+				'key'        => 'field_cta',
+				'name'       => 'cta',
+				'label'      => 'Call to action',
+				'type'       => 'group',
+				'sub_fields' => array(
+					array( 'key' => 'field_cta_label', 'name' => 'label', 'label' => 'Label', 'type' => 'text' ),
+					array( 'key' => 'field_cta_link', 'name' => 'link', 'label' => 'Link', 'type' => 'url' ),
+				),
+			),
+			array(
+				'key'        => 'field_faqs',
+				'name'       => 'faqs',
+				'label'      => 'FAQs',
+				'type'       => 'repeater',
+				'max'        => 10,
+				'sub_fields' => array(
+					array( 'key' => 'field_q', 'name' => 'question', 'label' => 'Question', 'type' => 'text' ),
+					array( 'key' => 'field_a', 'name' => 'answer', 'label' => 'Answer', 'type' => 'textarea' ),
+				),
+			),
+			array(
+				'key'     => 'field_fpc',
+				'name'    => 'full_page_content',
+				'label'   => 'Full page content',
+				'type'    => 'flexible_content',
+				'layouts' => array(
+					'layout_abc' => array(
+						'key'        => 'layout_abc',
+						'name'       => '2_column_content',
+						'label'      => '2 column content',
+						'sub_fields' => array(
+							array(
+								'key'        => 'field_rows',
+								'name'       => '2_column_content_row',
+								'label'      => 'Rows',
+								'type'       => 'repeater',
+								'sub_fields' => array(
+									array( 'key' => 'field_text', 'name' => '2_column_content_text', 'label' => 'Text', 'type' => 'wysiwyg' ),
+									array( 'key' => 'field_image', 'name' => '2_column_content_image', 'label' => 'Image', 'type' => 'image' ),
+								),
+							),
+						),
+					),
+				),
+			),
+		),
+	);
+	$GLOBALS['acf']['values'][2549] = array(
+		'field_title' => 'Steel Buildings Virginia',
+		'field_intro' => '<p>Old intro</p>',
+		'field_img'   => '77',
+		'field_style' => 'light',
+		'field_cta'   => array( 'field_cta_label' => 'Call us', 'field_cta_link' => 'https://s.example/contact/' ),
+		'field_faqs'  => array(
+			array( 'field_q' => 'Q1', 'field_a' => 'A1' ),
+			array( 'field_q' => 'Q2', 'field_a' => 'A2' ),
+		),
+		'field_fpc'   => array(
+			array( 'acf_fc_layout' => '2_column_content', 'field_rows' => array( array( 'field_text' => '<p>Row 0</p>', 'field_image' => '77' ) ) ),
+			array( 'acf_fc_layout' => '2_column_content', 'field_rows' => array( array( 'field_text' => '<p>Second section</p>', 'field_image' => '78' ) ) ),
+			array( 'acf_fc_layout' => '2_column_content', 'field_rows' => array( array( 'field_text' => '<p>Row 2</p>', 'field_image' => '' ) ) ),
+		),
+	);
+}
+
 // ---- scenarios ----------------------------------------------------------------------------------------------
 switch ( $scenario ) {
 	case 'all-post-types-and-taxonomies':
@@ -268,11 +411,12 @@ switch ( $scenario ) {
 		check( isset( $GLOBALS['wp']['fields']['tag']['mkt_seo'] ) && ! isset( $GLOBALS['wp']['fields']['post_tag'] ), 'tags registered under "tag", the name the WordPress terms controller uses' );
 		foreach ( array( 'post', 'page', 'product', 'locations', 'category', 'product_cat', 'product_tag' ) as $type ) {
 			check( isset( $GLOBALS['wp']['fields'][ $type ]['mkt_seo'] ), "field on $type" );
+			check( isset( $GLOBALS['wp']['fields'][ $type ]['mkt_fields'] ), "mkt_fields on $type" );
 		}
 		foreach ( array( 'attachment', 'nav_menu', 'post_format', 'wp_pattern_category' ) as $type ) {
 			check( ! isset( $GLOBALS['wp']['fields'][ $type ] ), "no field on internal $type" );
 		}
-		check( array( '1.2.2' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
+		check( array( '1.3.0' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
 		check( array( 'show_ui' => true, 'show_in_rest' => true ) === $GLOBALS['wp']['taxonomy_query'], 'taxonomies chosen by show_ui + show_in_rest, not public (tags can be non-public)' );
 		// A product update is saved early, like posts.
 		check( true === rest_update( 9329, array( 'title' => 'Product SEO' ), 'product' ), 'product update ok' );
@@ -353,7 +497,7 @@ switch ( $scenario ) {
 		boot_rest();
 		$schema = field()['schema'];
 		check( array( 'none' ) === $schema['properties']['plugin']['enum'], 'advertises plugin none' );
-		check( array( '1.2.2' ) === $schema['properties']['version']['enum'], 'advertises version' );
+		check( array( '1.3.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 5 ) );
 		check( 'none' === $value['plugin'] && '' === $value['title'], 'get works without an SEO plugin' );
 		check( true === rest_update( 5, array( 'title' => 'T' ) ), 'update is a harmless no-op' );
@@ -380,7 +524,7 @@ switch ( $scenario ) {
 		call_user_func( $cb, array( 'title' => 'Fresh' ), (object) array( 'ID' => 8 ) );
 		check( 'Fresh' === $GLOBALS['wp']['meta'][8]['_yoast_wpseo_title'], 'new post saved by update_callback' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 7 ) );
-		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.2.2' === $value['version'], 'read back' );
+		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.3.0' === $value['version'], 'read back' );
 		break;
 
 	case 'rank-math-with-hostile-autoloader':
@@ -485,6 +629,189 @@ switch ( $scenario ) {
 		check( false !== strpos( $html, 'MKT Publisher SEO Bridge' ) && false !== strpos( $html, 'icon-128x128.png' ), 'page renders with icon' );
 		check( false !== strpos( $html, 'Yoast SEO is used' ) && false !== strpos( $html, '_yoast_wpseo_canonical' ), 'page shows plugin and fields' );
 		$GLOBALS['wp']['can_edit'] = false;
+		break;
+
+	case 'fields-acf-read':
+		load_acf_page_fixture();
+		define( 'WPSEO_VERSION', '25.0' );
+		require $plugin;
+		boot_rest();
+		$schema = $GLOBALS['wp']['fields']['page']['mkt_fields']['schema'];
+		check( array( 'acf' ) === $schema['properties']['source']['enum'] && array( '1.3.0' ) === $schema['properties']['version']['enum'], 'schema advertises ACF and the bridge version' );
+		check( null === read_fields( 2549, 'page', false ), 'not computed for requests that do not ask for it (editor, other clients)' );
+		$f      = read_fields( 2549, 'page' );
+		$screen = end( $GLOBALS['acf']['screens'] );
+		check( 'acf' === $f['source'] && '6.3.5' === $f['acf_version'] && '1.3.0' === $f['version'], 'source and versions' );
+		check( 2549 === $screen['post_id'] && 'page' === $screen['post_type'], "ACF's location rules get the post and its type" );
+		$fields = $f['fields'];
+		check( 'Steel Buildings Virginia' === $fields['hero_title']['value'] && 'text' === $fields['hero_title']['type'] && true === $fields['hero_title']['writable'], 'simple field' );
+		check( false === $fields['note']['writable'], 'message field is read-only' );
+		check( array( 'light', 'dark' ) === $fields['style']['choices'], 'choices listed' );
+		check( array( 'label' => 'Call us', 'link' => 'https://s.example/contact/' ) === $fields['cta']['value'], 'group keyed by sub field name' );
+		check( array( array( 'question' => 'Q1', 'answer' => 'A1' ), array( 'question' => 'Q2', 'answer' => 'A2' ) ) === $fields['faqs']['value'] && 10 === $fields['faqs']['max'], 'repeater rows by name, with max' );
+		check( '<p>Second section</p>' === $fields['full_page_content']['value'][1]['2_column_content_row'][0]['2_column_content_text'], 'flexible content with a nested repeater, by name' );
+		check( '2_column_content' === $fields['full_page_content']['value'][1]['acf_fc_layout'], 'layout name kept' );
+		check( 'wysiwyg' === $fields['full_page_content']['layouts']['2_column_content']['sub_fields']['2_column_content_row']['sub_fields']['2_column_content_text']['type'], 'nested definitions' );
+		check( array() === $f['meta'], 'no meta keys listed' );
+		$GLOBALS['wp']['can_edit'] = false;
+		check( null === read_fields( 2549, 'page' ), 'hidden from users who cannot edit' );
+		break;
+
+	case 'fields-acf-write':
+		load_acf_page_fixture();
+		require $plugin;
+		boot_rest();
+		$before                                                      = read_fields( 2549, 'page' )['fields'];
+		$fpc                                                         = $before['full_page_content']['value'];
+		$fpc[1]['2_column_content_row'][0]['2_column_content_text'] = '<p>New second section</p>';
+		$faqs                                                        = $before['faqs']['value'];
+		$faqs[1]['answer']                                           = 'New A2';
+		check( true === rest_update_fields( 2549, array( 'fields' => array( 'full_page_content' => $fpc, 'faqs' => $faqs, 'hero_title' => 'New title' ), 'source' => 'acf', 'version' => '1.0' ), 'page' ), 'write ok (read-only parts sent back are ignored)' );
+		$stored = $GLOBALS['acf']['values'][2549];
+		check( '<p>New second section</p>' === $stored['field_fpc'][1]['field_rows'][0]['field_text'], 'nested text saved under field keys' );
+		check( '<p>Row 0</p>' === $stored['field_fpc'][0]['field_rows'][0]['field_text'] && '78' === $stored['field_fpc'][1]['field_rows'][0]['field_image'], 'other rows and images kept' );
+		check( '2_column_content' === $stored['field_fpc'][2]['acf_fc_layout'], 'layouts kept' );
+		check( 'New A2' === $stored['field_faqs'][1]['field_a'] && 'Q1' === $stored['field_faqs'][0]['field_q'], 'repeater row changed, others kept' );
+		check( 'field_fpc' === $GLOBALS['acf']['writes'][0][0] && 2549 === $GLOBALS['acf']['writes'][0][2], 'update_field by field key on the post' );
+		check( '<p>New second section</p>' === read_fields( 2549, 'page' )['fields']['full_page_content']['value'][1]['2_column_content_row'][0]['2_column_content_text'], 'read back by name' );
+		// HTML from accounts without unfiltered_html is filtered like post content.
+		$GLOBALS['wp']['unfiltered_html'] = false;
+		rest_update_fields( 2549, array( 'fields' => array( 'intro' => '<p>Hi</p><script>alert(1)</script>' ) ), 'page' );
+		check( '<p>Hi</p>' === $GLOBALS['acf']['values'][2549]['field_intro'], 'script removed for accounts without unfiltered_html' );
+		$GLOBALS['wp']['unfiltered_html'] = true;
+		// Refused before anything is saved.
+		$writes = count( $GLOBALS['acf']['writes'] );
+		$cases  = array(
+			array( array( 'nope' => 'x' ), 'no custom field "nope"' ),
+			array( array( 'note' => 'x' ), 'message field' ),
+			array( array( 'hero_title' => array( 'x' ) ), 'must be text' ),
+			array( array( 'hero_image' => '999' ), 'media library' ),
+			array( array( 'style' => 'neon' ), 'one of: light, dark' ),
+			array( array( 'cta' => array( 'label' => 'x', 'colour' => 'red' ) ), 'no sub field "colour"' ),
+			array( array( 'cta' => array( 'link' => 'javascript:alert(1)' ) ), 'http or https URL' ),
+			array( array( 'faqs' => 'x' ), 'list of rows' ),
+			array( array( 'faqs' => array_fill( 0, 11, array( 'question' => 'q' ) ) ), 'at most 10 rows' ),
+			array( array( 'full_page_content' => array( array( 'acf_fc_layout' => 'hero' ) ) ), 'acf_fc_layout' ),
+			array( array( 'full_page_content' => array( array( 'acf_fc_layout' => '2_column_content', '2_column_content_row' => array( array( '2_column_content_image' => 'abc' ) ) ) ) ), 'full_page_content[0].2_column_content_row[0].2_column_content_image' ),
+			array( array( 'faqs' => null ), 'cannot be null' ),
+			array( array( 'hero_title' => 'ok', 'hero_image' => 'bad' ), 'media library' ),
+		);
+		foreach ( $cases as $case ) {
+			$result = rest_update_fields( 2549, array( 'fields' => $case[0] ), 'page' );
+			check( is_wp_error( $result ) && false !== strpos( $result->message, $case[1] ), 'refused: ' . $case[1] . ' (got ' . ( is_wp_error( $result ) ? $result->message : 'success' ) . ')' );
+		}
+		check( count( $GLOBALS['acf']['writes'] ) === $writes, 'nothing saved for refused changes' );
+		check( 'New title' === $GLOBALS['acf']['values'][2549]['field_title'], 'a refused request saves none of its changes' );
+		// null clears a simple field; an empty repeater is allowed.
+		check( true === rest_update_fields( 2549, array( 'fields' => array( 'hero_image' => null, 'faqs' => array() ) ), 'page' ), 'clearing ok' );
+		check( null === $GLOBALS['acf']['values'][2549]['field_img'] && array() === $GLOBALS['acf']['values'][2549]['field_faqs'], 'cleared' );
+		// New items, and accounts that cannot edit, are refused.
+		$validate = $GLOBALS['wp']['fields']['page']['mkt_fields']['schema']['arg_options']['validate_callback'];
+		check( is_wp_error( call_user_func( $validate, array( 'fields' => array( 'hero_title' => 'x' ) ), new WP_REST_Request( array() ), 'mkt_fields' ) ), 'new items refused' );
+		check( is_wp_error( call_user_func( $validate, array( 'fields' => 'x' ), new WP_REST_Request( array( 'id' => 2549 ) ), 'mkt_fields' ) ), 'fields must be an object' );
+		$GLOBALS['wp']['can_edit'] = false;
+		$denied                    = call_user_func( $GLOBALS['wp']['fields']['page']['mkt_fields']['update_callback'], array( 'fields' => array( 'hero_title' => 'x' ), 'meta' => array() ), (object) array( 'ID' => 2549 ) );
+		check( is_wp_error( $denied ) && 'rest_cannot_edit' === $denied->get_error_code(), 'write refused without permission' );
+		break;
+
+	case 'fields-meta':
+		$GLOBALS['wp']['taxonomies']                     = array( 'category', 'locations_region' );
+		$GLOBALS['wp']['terms'][9]                       = (object) array( 'term_id' => 9, 'taxonomy' => 'locations_region' );
+		$GLOBALS['wp']['options']['mkt_fields_meta_keys'] = array( 'city_intro', '_wp_page_template', 'bad key', 'state_faq', 3 );
+		$GLOBALS['wp']['meta'][590]                      = array( 'city_intro' => 'Old intro', 'state_faq' => array( 'q' => 'structured' ) );
+		require $plugin;
+		add_filter(
+			'mkt_fields_meta_keys',
+			function ( $keys, $kind ) {
+				$keys[] = 'region_note';
+				return $keys;
+			}
+		);
+		boot_rest();
+		check( array( 'city_intro', 'state_faq', 'region_note' ) === MKT_SEO_Bridge::meta_keys( 'post' ), 'internal and malformed keys dropped; the filter adds keys' );
+		$f = read_fields( 590 );
+		check( 'none' === $f['source'] && array() === $f['fields'], 'no ACF: no fields' );
+		check( array( 'value' => 'Old intro', 'writable' => true ) === $f['meta']['city_intro'], 'listed meta read' );
+		check( false === $f['meta']['state_faq']['writable'], 'structured meta is read-only' );
+		check( true === rest_update_fields( 590, array( 'meta' => array( 'city_intro' => 'New <b>intro</b>' ) ) ), 'meta write ok' );
+		check( 'New <b>intro</b>' === $GLOBALS['wp']['meta'][590]['city_intro'], 'meta saved' );
+		$refused = rest_update_fields( 590, array( 'meta' => array( '_wp_page_template' => 'x' ) ) );
+		check( is_wp_error( $refused ) && false !== strpos( $refused->message, 'not in the list' ), 'internal key refused even when listed' );
+		check( is_wp_error( rest_update_fields( 590, array( 'meta' => array( 'state_faq' => 'x' ) ) ) ), 'structured value not overwritten' );
+		check( is_wp_error( rest_update_fields( 590, array( 'meta' => array( 'city_intro' => array( 'x' ) ) ) ) ), 'non-text refused' );
+		$no_acf = rest_update_fields( 590, array( 'fields' => array( 'hero_title' => 'x' ) ) );
+		check( is_wp_error( $no_acf ) && false !== strpos( $no_acf->message, 'Advanced Custom Fields is not active' ), 'ACF fields refused without ACF' );
+		check( true === rest_update_fields( 590, array( 'meta' => array( 'city_intro' => null ) ) ) && ! isset( $GLOBALS['wp']['meta'][590]['city_intro'] ), 'null removes the value' );
+		check( true === rest_update_fields( 9, array( 'meta' => array( 'region_note' => 'East' ) ), 'locations_region' ), 'term meta write' );
+		check( 'East' === $GLOBALS['wp']['term_meta'][9]['region_note'] && 'East' === read_fields( 9, 'locations_region' )['meta']['region_note']['value'], 'term meta saved and read' );
+		break;
+
+	case 'fields-terms':
+		require __DIR__ . '/acf-stubs.php';
+		$GLOBALS['wp']['taxonomies']         = array( 'product_cat' );
+		$GLOBALS['wp']['terms'][16]          = (object) array( 'term_id' => 16, 'taxonomy' => 'product_cat' );
+		$GLOBALS['acf']['groups'][]          = array(
+			'match'  => function ( $screen ) {
+				return 'product_cat' === ( $screen['taxonomy'] ?? '' );
+			},
+			'fields' => array( array( 'key' => 'field_bottom', 'name' => 'bottom_content', 'label' => 'Bottom content', 'type' => 'wysiwyg' ) ),
+		);
+		$GLOBALS['acf']['values']['term_16'] = array( 'field_bottom' => '<p>Old</p>' );
+		define( 'WPSEO_VERSION', '25.0' );
+		require $plugin;
+		boot_rest();
+		check( '<p>Old</p>' === read_fields( 16, 'product_cat' )['fields']['bottom_content']['value'], 'term field read from ACF id term_16' );
+		check( true === rest_update_fields( 16, array( 'fields' => array( 'bottom_content' => '<p>New</p>' ) ), 'product_cat' ), 'term write ok' );
+		check( array( 'field_bottom', '<p>New</p>', 'term_16' ) === end( $GLOBALS['acf']['writes'] ), 'saved on term_16' );
+		check( isset( $GLOBALS['wp']['fields']['product_cat']['mkt_seo'] ), 'mkt_seo still registered next to mkt_fields' );
+		break;
+
+	case 'fields-storage-failure':
+		load_acf_page_fixture();
+		require $plugin;
+		boot_rest();
+		$GLOBALS['acf']['throws'] = true;
+		check( null === read_fields( 2549, 'page' ), 'read failure gives null, no fatal' );
+		$result = rest_update_fields( 2549, array( 'fields' => array( 'hero_title' => 'x' ) ), 'page' );
+		check( is_wp_error( $result ) && 'mkt_fields_save_failed' === $result->get_error_code(), 'write failure gives WP_Error, no fatal' );
+		break;
+
+	case 'fields-admin-meta-keys':
+		$GLOBALS['wp']['admin'] = true;
+		require $plugin;
+		do_action( 'admin_menu' );
+		$_POST = array(
+			'_wpnonce'             => 'nonce-mkt_fields_meta_keys',
+			'mkt_fields_meta_keys' => "city_intro\nstate_intro, _wp_page_template\nbad.key\ncity_intro",
+		);
+		try {
+			do_action( 'admin_post_mkt_fields_save_meta_keys' );
+			check( false, 'redirects after saving' );
+		} catch ( Harness_Exit $e ) {
+			check( false !== strpos( $e->getMessage(), 'mkt-fields-saved=1' ), 'redirects back to the status page' );
+		}
+		check( array( 'city_intro', 'state_intro' ) === $GLOBALS['wp']['options']['mkt_fields_meta_keys'], 'keys cleaned and de-duplicated' );
+		$_POST['_wpnonce'] = 'forged';
+		try {
+			do_action( 'admin_post_mkt_fields_save_meta_keys' );
+			check( false, 'forged request refused' );
+		} catch ( RuntimeException $e ) {
+			check( 'nonce check failed' === $e->getMessage(), 'nonce checked' );
+		}
+		$_POST['_wpnonce']         = 'nonce-mkt_fields_meta_keys';
+		$GLOBALS['wp']['can_edit'] = false;
+		try {
+			do_action( 'admin_post_mkt_fields_save_meta_keys' );
+			check( false, 'refused without manage_options' );
+		} catch ( Harness_Exit $e ) {
+			check( 'die 403' === $e->getMessage(), 'needs manage_options' );
+		}
+		$GLOBALS['wp']['can_edit'] = true;
+		ob_start();
+		call_user_func( $GLOBALS['wp']['menu']['mkt-seo-bridge'] );
+		$html = ob_get_clean();
+		check( false !== strpos( $html, 'mkt_fields_save_meta_keys' ) && false !== strpos( $html, "city_intro\nstate_intro" ), 'form shows the saved keys' );
+		check( false !== strpos( $html, 'Advanced Custom Fields is not active' ), 'ACF status shown' );
 		break;
 
 	default:

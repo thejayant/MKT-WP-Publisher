@@ -20,7 +20,7 @@ Unknown arguments are always rejected.
 
 Keep `post_type` paired with the ID, the same way you keep `site_id`.
 
-**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only the tools that change public content are `destructiveHint: true`: `update_term`, `edit_published_post`, `edit_blocks`, `publish_post`, `unpublish_post`, `schedule_post` and `update_product`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
+**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only the tools that change public content are `destructiveHint: true`: `update_term`, `edit_published_post`, `edit_blocks`, `update_fields`, `publish_post`, `unpublish_post`, `schedule_post` and `update_product`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
 
 **Plain permalinks:** if `/wp-json/...` returns WordPress's HTML 404 page, the server retries that request once as `/?rest_route=/wp/v2/...`. It keeps using that form for the site until the extension restarts. The retry is safe for writes, because an unrouted 404 means WordPress processed nothing.
 
@@ -270,6 +270,50 @@ Each change is one of:
 - Only `content` is sent.
 
 **Returns `data`:** summary, `changes` (before/after per edit), `edits`, `live`, `undo` (WordPress Revisions), and a `warning` if WordPress altered the content on save, for example removing HTML the account may not post.
+
+## inspect_fields
+Read-only. Needs SEO Bridge 1.3.0+ (checked with `OPTIONS` on the item's route; the answer is cached per site and route).
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_id` | integer ≥ 1 | with `post_type` (default `post`) for posts, pages, products and other types |
+| `post_type` | post type slug | |
+| `taxonomy` + `term_id` | slug + integer ≥ 1 | for categories, tags and product categories instead of `post_id` |
+
+Sends `GET {route}/{id}?context=edit&mkt_fields=1`. The bridge computes the fields only for requests that ask for them.
+
+**Returns `data`:** the item (`post_id`, `post_type`, `status`, `title`, `url`, `modified_gmt`, or `term_id`, `taxonomy`, `name`, `link`), `source` (`acf` or `none`), `acf_version`, `bridge_version`, and:
+- `paths`: every value as `{path, type, writable, value}`, with the value shortened to 80 characters and HTML removed. At most 300; `paths_truncated` is set if there are more.
+- `fields`: each top-level ACF field by name, `{key, label, type, writable, value, sub_fields?, layouts?, choices?, multiple?, min?, max?}`. Values are ACF's stored values (images and posts as IDs), with sub fields by name. Repeater and flexible content values are lists of rows; flexible rows carry `acf_fc_layout`.
+- `meta`: listed meta keys as `{value, writable}`.
+- `note` when nothing is found (no field group shown on the item, or ACF not active and no meta keys listed).
+
+## update_fields
+Write. **Use only after the user explicitly approves this site, item and change.** Published items and terms change immediately.
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_id` + `post_type`, or `taxonomy` + `term_id` | | as for `inspect_fields` |
+| `changes` | list of 1–50 objects, required | see below |
+| `confirm_title` | string, required | the current title (the name, for terms) |
+| `confirm_edit` | `true`, required | |
+| `expected_modified_gmt` | string | posts only; terms have no modified date |
+
+Each change is one of:
+- `{ "path": "faqs[1].answer", "value": "…" }`: set one value. Paths: `name`, `group.sub`, `repeater[row].sub`, `flexible[row].sub`, nested as deep as needed (`full_page_content[1].2_column_content_row[0].2_column_content_text`). Rows are numbered from 0.
+- `{ "path": "…", "replace_text": { "find": "…", "with": "…", "all": false } }`: change part of a text value; it must match exactly once unless `all: true`.
+- `{ "path": "faqs[1]", "value": { "answer": "…" } }`: merge sub fields into one row. A flexible content row keeps its layout.
+- `{ "path": "faqs", "value": [ … ] }`: replace a whole field, which is how rows are added or removed.
+- `{ "meta": "city_intro", "value": "…" }`: a listed meta key; `null` removes it.
+
+**Rules:**
+- The tool reads the current values and changes only the addressed value. It then sends each changed top-level field whole (`POST {route}/{id}` with `{mkt_fields: {fields: {name: value}, meta: {…}}}`), so other rows, layouts and sub fields are sent back exactly as stored.
+- Checked by the extension: the path exists, the row exists, the field is writable, and the value type fits (text, number, media ID, list of rows, …).
+- Checked again by the bridge before anything is saved: choices, that media IDs are attachments, maximum rows, layouts and sub field names. If any change fails, nothing is saved.
+- HTML is filtered like post content for accounts without the `unfiltered_html` capability.
+- Changes that leave every value as it is are refused.
+
+**Returns `data`:** the item, `changes` (`{path or meta, before, after}`), `live`, `restore.changes` (the previous whole values; pass them back to `update_fields` to undo), `undo`, and a `warning` if WordPress stored a value differently from what was sent.
 
 ## list_terms / get_term / update_term
 Any taxonomy: `category`, `post_tag`, `product_cat`, `product_tag`, or custom. `category` and `post_tag` need no lookup. Others are looked up once per site via `/wp/v2/taxonomies/{taxonomy}`. WordPress internal taxonomies (`nav_menu`, `post_format`, …) are refused.

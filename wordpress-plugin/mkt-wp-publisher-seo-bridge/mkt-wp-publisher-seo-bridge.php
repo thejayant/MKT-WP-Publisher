@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:       MKT Publisher SEO Bridge for Yoast & Rank Math
- * Description:       Lets the MKT WP Publisher extension for Claude read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO or Rank Math, through the WordPress REST API.
- * Version:           1.2.2
+ * Description:       Lets the MKT WP Publisher extension for Claude read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO or Rank Math, and their Advanced Custom Fields, through the WordPress REST API.
+ * Version:           1.3.0
  * Author:            Jayant
  * Requires at least: 5.6
  * Requires PHP:      7.4
@@ -17,6 +17,13 @@
  *     "title": "", "description": "", "focus_keyword": "", "canonical": "" }
  * Writing it requires permission to edit that post. An empty string removes a value.
  *
+ * From 1.3.0 a second field, "mkt_fields", exposes custom fields on the same post types and taxonomies: the
+ * Advanced Custom Fields shown on that item (values plus definitions: type, sub fields, layouts, choices) and any
+ * post/term meta keys an administrator lists under Tools > MKT SEO Bridge. It is computed only for requests that
+ * ask for it (?mkt_fields=1, or a write that contains it), so the editor and other REST clients never pay for it.
+ * Writes send whole top-level values: { "fields": { "name": value }, "meta": { "key": "text" } }. Every value is
+ * checked against the field definition before anything is saved; unknown or read-only fields are refused.
+ *
  * Neither SEO plugin registers its post meta for the REST API, which is why this bridge exists.
  * For existing posts the values are saved just BEFORE WordPress saves the post, so Yoast's cached
  * "indexable" (which drives the page's <title> and meta tags) is rebuilt with the new values right away.
@@ -25,7 +32,7 @@
  * Built to coexist with other plugins and custom code:
  * - Everything lives in one class guarded by class_exists(), so a second copy of the plugin (for example an
  *   old folder or a must-use copy) does nothing instead of causing a "Cannot redeclare" fatal error.
- * - It only acts on REST requests that contain "mkt_seo"; everything else passes through untouched.
+ * - It only acts on REST requests that contain "mkt_seo" or "mkt_fields"; everything else passes through untouched.
  * - Read-only parts of the field ("plugin", "version") and null are ignored on writes, so clients that send
  *   back the whole post they read keep working.
  * - Errors inside its own callbacks are caught; it never breaks other REST responses or the editor.
@@ -42,7 +49,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 	final class MKT_SEO_Bridge {
 
-		const VERSION     = '1.2.2';
+		const VERSION     = '1.3.0';
 		const FIELD       = 'mkt_seo';
 		const TEXT_DOMAIN = 'mkt-wp-publisher-seo-bridge';
 
@@ -58,6 +65,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			add_action( 'rest_api_init', array( __CLASS__, 'register' ) );
 			if ( is_admin() ) {
 				add_action( 'admin_menu', array( __CLASS__, 'add_status_page' ) );
+				add_action( 'admin_post_mkt_fields_save_meta_keys', array( __CLASS__, 'save_meta_keys' ) );
 				add_filter( 'plugin_action_links_' . plugin_basename( $file ), array( __CLASS__, 'action_links' ) );
 			}
 		}
@@ -139,6 +147,15 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 						'schema'          => self::schema(),
 					)
 				);
+				register_rest_field(
+					$post_type,
+					self::FIELDS,
+					array(
+						'get_callback'    => array( __CLASS__, 'get_post_fields' ),
+						'update_callback' => array( __CLASS__, 'update_post_fields' ),
+						'schema'          => self::fields_schema( 'post' ),
+					)
+				);
 			}
 			foreach ( self::taxonomies() as $taxonomy ) {
 				if ( ! taxonomy_exists( $taxonomy ) ) {
@@ -154,6 +171,15 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 						'get_callback'    => array( __CLASS__, 'get_term_field' ),
 						'update_callback' => array( __CLASS__, 'update_term_field' ),
 						'schema'          => self::schema(),
+					)
+				);
+				register_rest_field(
+					'post_tag' === $taxonomy ? 'tag' : $taxonomy,
+					self::FIELDS,
+					array(
+						'get_callback'    => array( __CLASS__, 'get_term_fields' ),
+						'update_callback' => array( __CLASS__, 'update_term_fields' ),
+						'schema'          => self::fields_schema( 'term' ),
 					)
 				);
 			}
@@ -477,6 +503,612 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			return true;
 		}
 
+		/* ---------- Custom fields: Advanced Custom Fields and listed meta keys ("mkt_fields") ---------- */
+
+		const FIELDS           = 'mkt_fields';
+		const META_KEYS_OPTION = 'mkt_fields_meta_keys';
+
+		/** ACF field types that can be written. Others (tab, message, accordion, clone, google_map, password, …) are read-only. */
+		public static function writable_types() {
+			return array( 'text', 'textarea', 'wysiwyg', 'email', 'url', 'number', 'range', 'image', 'file', 'gallery', 'true_false', 'select', 'radio', 'checkbox', 'button_group', 'date_picker', 'date_time_picker', 'time_picker', 'color_picker', 'link', 'oembed', 'post_object', 'page_link', 'relationship', 'taxonomy', 'user', 'group', 'repeater', 'flexible_content' );
+		}
+
+		/** Text-like types whose HTML is filtered for accounts without the unfiltered_html capability. */
+		private static function text_types() {
+			return array( 'text', 'textarea', 'wysiwyg', 'oembed' );
+		}
+
+		/** Advanced Custom Fields (free or Pro) with the functions the bridge uses, checked without autoloading. */
+		public static function acf_active() {
+			return function_exists( 'acf_get_field_groups' ) && function_exists( 'acf_get_fields' ) && function_exists( 'acf_get_value' ) && function_exists( 'update_field' );
+		}
+
+		/** Field schema. The "source" and "version" enums tell the extension, via OPTIONS, what this site supports. */
+		public static function fields_schema( $kind ) {
+			return array(
+				'description' => 'Custom fields (Advanced Custom Fields and listed meta keys) for MKT WP Publisher (SEO Bridge ' . self::VERSION . '). Read with ?mkt_fields=1.',
+				'type'        => array( 'object', 'null' ),
+				'context'     => array( 'edit' ),
+				'properties'  => array(
+					'source'  => array(
+						'type'     => 'string',
+						'enum'     => array( self::acf_active() ? 'acf' : 'none' ),
+						'readonly' => true,
+					),
+					'version' => array(
+						'type'     => 'string',
+						'enum'     => array( self::VERSION ),
+						'readonly' => true,
+					),
+					'fields'  => array( 'type' => 'object' ),
+					'meta'    => array( 'type' => 'object' ),
+				),
+				'arg_options' => array(
+					'validate_callback' => array( __CLASS__, 'term' === $kind ? 'validate_term_fields' : 'validate_post_fields' ),
+					'sanitize_callback' => array( __CLASS__, 'sanitize_fields' ),
+				),
+			);
+		}
+
+		/** Meta keys an administrator made editable (Tools > MKT SEO Bridge), plus any added with the mkt_fields_meta_keys filter. */
+		public static function meta_keys( $kind = 'post' ) {
+			$keys = get_option( self::META_KEYS_OPTION, array() );
+			$keys = apply_filters( 'mkt_fields_meta_keys', is_array( $keys ) ? $keys : array(), $kind );
+			$out  = array();
+			foreach ( (array) $keys as $key ) {
+				if ( is_string( $key ) && self::meta_key_allowed( trim( $key ) ) ) {
+					$out[] = trim( $key );
+				}
+			}
+			return array_values( array_unique( $out ) );
+		}
+
+		/** A plain meta key that is not one of WordPress's own internal keys. */
+		public static function meta_key_allowed( $key ) {
+			return is_string( $key ) && 1 === preg_match( '/^[A-Za-z0-9_\-]{1,190}$/', $key ) && 0 !== strpos( $key, '_wp_' ) && 0 !== strpos( $key, '_edit_' );
+		}
+
+		/** Only requests that ask for the fields (?mkt_fields=1) or write them get them, so other requests stay as fast as before. */
+		private static function wants_fields( $request ) {
+			return $request instanceof WP_REST_Request && $request->has_param( self::FIELDS );
+		}
+
+		/** REST read on posts. Never throws. */
+		public static function get_post_fields( $object, $field_name = '', $request = null ) {
+			try {
+				$post_id = isset( $object['id'] ) ? (int) $object['id'] : 0;
+				if ( ! $post_id || ! self::wants_fields( $request ) || ! current_user_can( 'edit_post', $post_id ) ) {
+					return null;
+				}
+				return self::read_fields( 'post', $post_id, '' );
+			} catch ( \Throwable $e ) {
+				return null;
+			}
+		}
+
+		/** REST read on terms. Never throws. */
+		public static function get_term_fields( $object, $field_name = '', $request = null ) {
+			try {
+				$term_id  = isset( $object['id'] ) ? (int) $object['id'] : 0;
+				$taxonomy = isset( $object['taxonomy'] ) ? (string) $object['taxonomy'] : '';
+				if ( ! $term_id || '' === $taxonomy || ! self::wants_fields( $request ) || ! current_user_can( 'edit_term', $term_id ) ) {
+					return null;
+				}
+				return self::read_fields( 'term', $term_id, $taxonomy );
+			} catch ( \Throwable $e ) {
+				return null;
+			}
+		}
+
+		/**
+		 * The ACF object ID of a post or term and the definitions of the fields shown on it, by name. ACF's own location
+		 * rules decide which field groups apply (post type, page template, taxonomy, …). A name already taken by an
+		 * earlier group is not replaced.
+		 */
+		private static function definitions( $kind, $id, $taxonomy ) {
+			if ( ! self::acf_active() ) {
+				return array( null, array() );
+			}
+			if ( 'term' === $kind ) {
+				$acf_id = 'term_' . $id;
+				$groups = acf_get_field_groups( array( 'taxonomy' => $taxonomy ) );
+			} else {
+				$acf_id = $id;
+				$groups = acf_get_field_groups(
+					array(
+						'post_id'   => $id,
+						'post_type' => get_post_type( $id ),
+					)
+				);
+			}
+			$fields = array();
+			foreach ( (array) $groups as $group ) {
+				foreach ( (array) acf_get_fields( $group ) as $field ) {
+					if ( is_array( $field ) && ! empty( $field['name'] ) && ! empty( $field['key'] ) && ! isset( $fields[ $field['name'] ] ) ) {
+						$fields[ $field['name'] ] = $field;
+					}
+				}
+			}
+			return array( $acf_id, $fields );
+		}
+
+		/** Current values and definitions of every field and listed meta key on one post or term. */
+		private static function read_fields( $kind, $id, $taxonomy ) {
+			list( $acf_id, $fields ) = self::definitions( $kind, $id, $taxonomy );
+			$out                     = array(
+				'source'      => self::acf_active() ? 'acf' : 'none',
+				'version'     => self::VERSION,
+				'acf_version' => defined( 'ACF_VERSION' ) ? (string) ACF_VERSION : '',
+				'fields'      => array(),
+				'meta'        => array(),
+			);
+			foreach ( $fields as $name => $field ) {
+				$out['fields'][ $name ] = self::describe( $field ) + array( 'value' => self::normalize( $field, acf_get_value( $acf_id, $field ) ) );
+			}
+			foreach ( self::meta_keys( $kind ) as $key ) {
+				$value               = 'term' === $kind ? get_term_meta( $id, $key, true ) : get_post_meta( $id, $key, true );
+				$out['meta'][ $key ] = array(
+					'value'    => $value,
+					'writable' => is_scalar( $value ),
+				);
+			}
+			return $out;
+		}
+
+		/** A field's definition for the extension: type, whether it can be written, sub fields, layouts, choices. */
+		private static function describe( $field ) {
+			$type = (string) $field['type'];
+			$out  = array(
+				'key'      => (string) $field['key'],
+				'label'    => isset( $field['label'] ) ? (string) $field['label'] : '',
+				'type'     => $type,
+				'writable' => in_array( $type, self::writable_types(), true ),
+			);
+			if ( ! empty( $field['required'] ) ) {
+				$out['required'] = true;
+			}
+			if ( ! empty( $field['choices'] ) && is_array( $field['choices'] ) ) {
+				$out['choices'] = array_map( 'strval', array_keys( $field['choices'] ) );
+			}
+			if ( 'select' === $type && ! empty( $field['multiple'] ) ) {
+				$out['multiple'] = true;
+			}
+			if ( 'group' === $type || 'repeater' === $type ) {
+				$out['sub_fields'] = self::describe_all( self::sub_fields( $field ) );
+			}
+			if ( 'flexible_content' === $type ) {
+				$out['layouts'] = array();
+				foreach ( (array) ( $field['layouts'] ?? array() ) as $layout ) {
+					if ( is_array( $layout ) && ! empty( $layout['name'] ) ) {
+						$out['layouts'][ $layout['name'] ] = array(
+							'label'      => isset( $layout['label'] ) ? (string) $layout['label'] : '',
+							'sub_fields' => self::describe_all( (array) ( $layout['sub_fields'] ?? array() ) ),
+						);
+					}
+				}
+			}
+			if ( 'repeater' === $type || 'flexible_content' === $type ) {
+				foreach ( array( 'min', 'max' ) as $limit ) {
+					if ( ! empty( $field[ $limit ] ) ) {
+						$out[ $limit ] = (int) $field[ $limit ];
+					}
+				}
+			}
+			return $out;
+		}
+
+		private static function describe_all( $fields ) {
+			$out = array();
+			foreach ( (array) $fields as $sub ) {
+				if ( is_array( $sub ) && ! empty( $sub['name'] ) && ! empty( $sub['key'] ) ) {
+					$out[ $sub['name'] ] = self::describe( $sub );
+				}
+			}
+			return $out;
+		}
+
+		/** Sub fields of a group or repeater, or of one flexible content layout (null if the layout does not exist). */
+		private static function sub_fields( $field, $layout_name = null ) {
+			if ( 'flexible_content' === $field['type'] ) {
+				foreach ( (array) ( $field['layouts'] ?? array() ) as $layout ) {
+					if ( is_array( $layout ) && isset( $layout['name'] ) && (string) $layout['name'] === (string) $layout_name ) {
+						return (array) ( $layout['sub_fields'] ?? array() );
+					}
+				}
+				return null;
+			}
+			return (array) ( $field['sub_fields'] ?? array() );
+		}
+
+		/** ACF's stored value with sub fields keyed by name instead of field key (repeaters and layouts as lists of rows). */
+		private static function normalize( $field, $raw ) {
+			switch ( $field['type'] ) {
+				case 'group':
+					return self::normalize_row( self::sub_fields( $field ), is_array( $raw ) ? $raw : array() );
+				case 'repeater':
+					$rows = array();
+					foreach ( is_array( $raw ) ? $raw : array() as $row ) {
+						if ( is_array( $row ) ) {
+							$rows[] = self::normalize_row( self::sub_fields( $field ), $row );
+						}
+					}
+					return $rows;
+				case 'flexible_content':
+					$rows = array();
+					foreach ( is_array( $raw ) ? $raw : array() as $row ) {
+						if ( is_array( $row ) && ! empty( $row['acf_fc_layout'] ) ) {
+							$subs   = self::sub_fields( $field, $row['acf_fc_layout'] );
+							$rows[] = array( 'acf_fc_layout' => (string) $row['acf_fc_layout'] ) + self::normalize_row( $subs ? $subs : array(), $row );
+						}
+					}
+					return $rows;
+			}
+			return $raw;
+		}
+
+		private static function normalize_row( $subs, $row ) {
+			$out = array();
+			foreach ( (array) $subs as $sub ) {
+				if ( ! is_array( $sub ) || empty( $sub['name'] ) || empty( $sub['key'] ) ) {
+					continue;
+				}
+				$raw                 = array_key_exists( $sub['key'], $row ) ? $row[ $sub['key'] ] : ( $row[ $sub['name'] ] ?? null );
+				$out[ $sub['name'] ] = self::normalize( $sub, $raw );
+			}
+			return $out;
+		}
+
+		/** REST argument validation on posts: every value is checked against its field definition before anything is saved. */
+		public static function validate_post_fields( $value, $request = null, $param = self::FIELDS ) {
+			return self::validate_request( 'post', $value, $request, $param );
+		}
+
+		public static function validate_term_fields( $value, $request = null, $param = self::FIELDS ) {
+			return self::validate_request( 'term', $value, $request, $param );
+		}
+
+		private static function validate_request( $kind, $value, $request, $param ) {
+			if ( null === $value ) {
+				return true;
+			}
+			if ( ! is_array( $value ) ) {
+				return new WP_Error( 'rest_invalid_type', sprintf( '%s must be an object.', $param ), array( 'status' => 400 ) );
+			}
+			foreach ( array( 'fields', 'meta' ) as $part ) {
+				if ( isset( $value[ $part ] ) && ! is_array( $value[ $part ] ) ) {
+					return self::invalid( sprintf( '%s.%s must be an object.', $param, $part ) );
+				}
+			}
+			try {
+				$changes = self::sanitize_fields( $value );
+				if ( ! $changes['fields'] && ! $changes['meta'] ) {
+					return true; // Only read-only parts were sent back.
+				}
+				$id = $request instanceof WP_REST_Request ? (int) $request->get_param( 'id' ) : 0;
+				if ( ! $id ) {
+					return self::invalid( sprintf( '%s can only be written to an existing item.', $param ) );
+				}
+				$plan = self::plan( $kind, $id, 'term' === $kind ? self::term_taxonomy( $id ) : '', $changes, $param );
+				return is_wp_error( $plan ) ? $plan : true;
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_fields_check_failed', __( 'The custom fields could not be checked.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+		}
+
+		/** REST argument sanitising: the writable parts only; null stays null. Values are checked and cleaned in plan(). */
+		public static function sanitize_fields( $value ) {
+			if ( null === $value ) {
+				return null;
+			}
+			$value = is_array( $value ) ? $value : array();
+			return array(
+				'fields' => isset( $value['fields'] ) && is_array( $value['fields'] ) ? $value['fields'] : array(),
+				'meta'   => isset( $value['meta'] ) && is_array( $value['meta'] ) ? $value['meta'] : array(),
+			);
+		}
+
+		private static function term_taxonomy( $term_id ) {
+			$term = function_exists( 'get_term' ) ? get_term( $term_id ) : null;
+			return $term && ! is_wp_error( $term ) && ! empty( $term->taxonomy ) ? (string) $term->taxonomy : '';
+		}
+
+		private static function invalid( $message ) {
+			return new WP_Error( 'mkt_fields_invalid', $message, array( 'status' => 400 ) );
+		}
+
+		/**
+		 * Check every requested change and turn it into what ACF stores (sub fields keyed by field key, HTML filtered).
+		 *
+		 * @return array|WP_Error {acf_id, fields: [[field, value]], meta: [key => text|null]}
+		 */
+		private static function plan( $kind, $id, $taxonomy, array $changes, $param ) {
+			$ops = array(
+				'acf_id' => null,
+				'fields' => array(),
+				'meta'   => array(),
+			);
+			if ( $changes['fields'] ) {
+				if ( ! self::acf_active() ) {
+					return self::invalid( __( 'Advanced Custom Fields is not active on this site, so no custom fields can be written.', self::TEXT_DOMAIN ) );
+				}
+				list( $acf_id, $defs ) = self::definitions( $kind, $id, $taxonomy );
+				$ops['acf_id']         = $acf_id;
+				foreach ( $changes['fields'] as $name => $new ) {
+					$name = (string) $name;
+					if ( ! isset( $defs[ $name ] ) ) {
+						return self::invalid( sprintf( '%s: there is no custom field "%s" on this item.', $param, $name ) );
+					}
+					$checked = self::check_value( $defs[ $name ], $new, $param . '.' . $name );
+					if ( is_wp_error( $checked ) ) {
+						return $checked;
+					}
+					$ops['fields'][] = array( $defs[ $name ], self::to_acf( $defs[ $name ], $new ) );
+				}
+			}
+			$allowed = $changes['meta'] ? self::meta_keys( $kind ) : array();
+			foreach ( $changes['meta'] as $key => $new ) {
+				$key = (string) $key;
+				if ( ! in_array( $key, $allowed, true ) ) {
+					return self::invalid( sprintf( '%s: meta key "%s" is not in the list of editable meta keys (Tools > MKT SEO Bridge).', $param, $key ) );
+				}
+				if ( null !== $new && ! is_scalar( $new ) ) {
+					return self::invalid( sprintf( '%s.meta.%s must be text, or null to remove it.', $param, $key ) );
+				}
+				$current = 'term' === $kind ? get_term_meta( $id, $key, true ) : get_post_meta( $id, $key, true );
+				if ( ! is_scalar( $current ) && '' !== $current ) {
+					return self::invalid( sprintf( '%s.meta.%s holds structured data and cannot be changed with this tool.', $param, $key ) );
+				}
+				$ops['meta'][ $key ] = null === $new ? null : self::clean_text( (string) $new );
+			}
+			return $ops;
+		}
+
+		/** A JSON list (an empty array counts as one). */
+		private static function is_list( $value ) {
+			return is_array( $value ) && ( ! $value || array_keys( $value ) === range( 0, count( $value ) - 1 ) );
+		}
+
+		private static function is_id( $value ) {
+			return ( is_int( $value ) && $value > 0 ) || ( is_string( $value ) && '' !== $value && ctype_digit( $value ) && (int) $value > 0 );
+		}
+
+		/** Check one value against its ACF field definition. Containers are checked row by row and sub field by sub field. */
+		private static function check_value( $field, $value, $path ) {
+			$type = (string) $field['type'];
+			if ( ! in_array( $type, self::writable_types(), true ) ) {
+				return self::invalid( sprintf( '%s is a %s field, which this tool cannot change.', $path, $type ) );
+			}
+			$containers = array( 'group', 'repeater', 'flexible_content' );
+			if ( null === $value ) {
+				return in_array( $type, $containers, true ) ? self::invalid( sprintf( '%s cannot be null; send an empty list or object instead.', $path ) ) : true;
+			}
+			$ok = true;
+			switch ( $type ) {
+				case 'text':
+				case 'textarea':
+				case 'wysiwyg':
+				case 'oembed':
+				case 'color_picker':
+				case 'date_picker':
+				case 'date_time_picker':
+				case 'time_picker':
+					$ok = is_string( $value ) ? true : 'text';
+					break;
+				case 'email':
+					$ok = is_string( $value ) && ( '' === $value || is_email( $value ) ) ? true : 'an email address';
+					break;
+				case 'url':
+					$ok = is_string( $value ) && ( '' === $value || preg_match( '#^https?://\S+$#i', $value ) ) ? true : 'an http or https URL';
+					break;
+				case 'number':
+				case 'range':
+					$ok = '' === $value || ( is_numeric( $value ) && ! is_bool( $value ) ) ? true : 'a number';
+					break;
+				case 'true_false':
+					$ok = is_bool( $value ) || in_array( $value, array( 0, 1, '0', '1' ), true ) ? true : 'true or false';
+					break;
+				case 'image':
+				case 'file':
+					$ok = '' === $value || ( self::is_id( $value ) && 'attachment' === get_post_type( (int) $value ) ) ? true : 'the ID of an item in the media library';
+					break;
+				case 'gallery':
+					$ok = self::is_list( $value ) || array() === $value ? true : 'a list of media library IDs';
+					foreach ( true === $ok ? $value : array() as $item ) {
+						if ( ! self::is_id( $item ) || 'attachment' !== get_post_type( (int) $item ) ) {
+							$ok = 'a list of media library IDs';
+						}
+					}
+					break;
+				case 'post_object':
+				case 'relationship':
+				case 'taxonomy':
+				case 'user':
+				case 'page_link':
+					$items = self::is_list( $value ) ? $value : array( $value );
+					foreach ( $items as $item ) {
+						if ( ! self::is_id( $item ) && ! ( 'page_link' === $type && is_string( $item ) && preg_match( '#^https?://\S+$#i', $item ) ) ) {
+							$ok = 'an ID or a list of IDs';
+						}
+					}
+					break;
+				case 'select':
+				case 'radio':
+				case 'button_group':
+				case 'checkbox':
+					$multiple = 'checkbox' === $type || ( 'select' === $type && ! empty( $field['multiple'] ) );
+					$items    = $multiple && is_array( $value ) ? $value : array( $value );
+					if ( ! $multiple && is_array( $value ) ) {
+						$ok = 'one choice';
+						break;
+					}
+					$choices = ! empty( $field['choices'] ) && is_array( $field['choices'] ) ? array_map( 'strval', array_keys( $field['choices'] ) ) : array();
+					$custom  = ! empty( $field['allow_custom'] ) || ! empty( $field['other_choice'] ) || ! empty( $field['create_options'] );
+					foreach ( $items as $item ) {
+						if ( ! is_scalar( $item ) || ( $choices && ! $custom && '' !== (string) $item && ! in_array( (string) $item, $choices, true ) ) ) {
+							$ok = $choices ? 'one of: ' . implode( ', ', $choices ) : 'text';
+						}
+					}
+					break;
+				case 'link':
+					$ok = '' === $value || ( is_array( $value ) && isset( $value['url'] ) && is_string( $value['url'] ) && ! array_diff( array_keys( $value ), array( 'url', 'title', 'target' ) ) ) ? true : 'a link {url, title, target}';
+					break;
+				case 'group':
+					return is_array( $value ) && ( ! $value || ! self::is_list( $value ) ) ? self::check_row( self::sub_fields( $field ), $value, $path ) : self::invalid( sprintf( '%s must be an object of sub fields.', $path ) );
+				case 'repeater':
+					if ( ! self::is_list( $value ) && array() !== $value ) {
+						return self::invalid( sprintf( '%s must be a list of rows.', $path ) );
+					}
+					if ( ! empty( $field['max'] ) && count( $value ) > (int) $field['max'] ) {
+						return self::invalid( sprintf( '%s takes at most %d rows.', $path, (int) $field['max'] ) );
+					}
+					foreach ( $value as $i => $row ) {
+						$checked = is_array( $row ) && ( ! $row || ! self::is_list( $row ) ) ? self::check_row( self::sub_fields( $field ), $row, $path . '[' . $i . ']' ) : self::invalid( sprintf( '%s[%d] must be an object of sub fields.', $path, $i ) );
+						if ( is_wp_error( $checked ) ) {
+							return $checked;
+						}
+					}
+					return true;
+				case 'flexible_content':
+					if ( ! self::is_list( $value ) && array() !== $value ) {
+						return self::invalid( sprintf( '%s must be a list of rows.', $path ) );
+					}
+					foreach ( $value as $i => $row ) {
+						$layout = is_array( $row ) && isset( $row['acf_fc_layout'] ) && is_string( $row['acf_fc_layout'] ) ? $row['acf_fc_layout'] : '';
+						$subs   = '' !== $layout ? self::sub_fields( $field, $layout ) : null;
+						if ( null === $subs ) {
+							return self::invalid( sprintf( '%s[%d] needs acf_fc_layout set to one of the layouts of this field.', $path, $i ) );
+						}
+						unset( $row['acf_fc_layout'] );
+						$checked = self::check_row( $subs, $row, $path . '[' . $i . ']' );
+						if ( is_wp_error( $checked ) ) {
+							return $checked;
+						}
+					}
+					return true;
+			}
+			return true === $ok ? true : self::invalid( sprintf( '%s must be %s.', $path, $ok ) );
+		}
+
+		/** Every key of a row or group must be one of its sub fields, and every value must fit that sub field. */
+		private static function check_row( $subs, array $row, $path ) {
+			$by_name = array();
+			foreach ( (array) $subs as $sub ) {
+				if ( is_array( $sub ) && ! empty( $sub['name'] ) ) {
+					$by_name[ $sub['name'] ] = $sub;
+				}
+			}
+			foreach ( $row as $name => $value ) {
+				if ( ! isset( $by_name[ $name ] ) ) {
+					return self::invalid( sprintf( '%s has no sub field "%s".', $path, $name ) );
+				}
+				$checked = self::check_value( $by_name[ $name ], $value, $path . '.' . $name );
+				if ( is_wp_error( $checked ) ) {
+					return $checked;
+				}
+			}
+			return true;
+		}
+
+		/** A checked value in the form ACF stores: sub fields keyed by field key, text filtered. */
+		private static function to_acf( $field, $value ) {
+			$type = (string) $field['type'];
+			if ( 'group' === $type ) {
+				return self::row_to_acf( self::sub_fields( $field ), (array) $value );
+			}
+			if ( 'repeater' === $type ) {
+				$rows = array();
+				foreach ( (array) $value as $row ) {
+					$rows[] = self::row_to_acf( self::sub_fields( $field ), (array) $row );
+				}
+				return $rows;
+			}
+			if ( 'flexible_content' === $type ) {
+				$rows = array();
+				foreach ( (array) $value as $row ) {
+					$layout = $row['acf_fc_layout'];
+					unset( $row['acf_fc_layout'] );
+					$rows[] = array( 'acf_fc_layout' => $layout ) + self::row_to_acf( (array) self::sub_fields( $field, $layout ), $row );
+				}
+				return $rows;
+			}
+			return is_string( $value ) && in_array( $type, self::text_types(), true ) ? self::clean_text( $value ) : $value;
+		}
+
+		private static function row_to_acf( $subs, array $row ) {
+			$out = array();
+			foreach ( (array) $subs as $sub ) {
+				if ( is_array( $sub ) && ! empty( $sub['name'] ) && array_key_exists( $sub['name'], $row ) ) {
+					$out[ $sub['key'] ] = self::to_acf( $sub, $row[ $sub['name'] ] );
+				}
+			}
+			return $out;
+		}
+
+		/** HTML is kept as sent for accounts allowed to post any HTML (Administrators, Editors); otherwise filtered like post content. */
+		private static function clean_text( $text ) {
+			return current_user_can( 'unfiltered_html' ) ? $text : wp_kses_post( $text );
+		}
+
+		/** REST write on posts, after WordPress saved the post. */
+		public static function update_post_fields( $value, $post ) {
+			$post_id = is_object( $post ) && isset( $post->ID ) ? (int) $post->ID : 0;
+			return $post_id ? self::write( 'post', $post_id, '', $value ) : true;
+		}
+
+		/** REST write on terms. */
+		public static function update_term_fields( $value, $term ) {
+			$term_id  = is_object( $term ) && isset( $term->term_id ) ? (int) $term->term_id : 0;
+			$taxonomy = is_object( $term ) && isset( $term->taxonomy ) ? (string) $term->taxonomy : '';
+			return $term_id && '' !== $taxonomy ? self::write( 'term', $term_id, $taxonomy, $value ) : true;
+		}
+
+		/**
+		 * Check everything first, then save. Nothing is saved unless every change passes.
+		 *
+		 * @return true|WP_Error
+		 */
+		private static function write( $kind, $id, $taxonomy, $value ) {
+			$changes = self::sanitize_fields( $value );
+			if ( null === $changes || ( ! $changes['fields'] && ! $changes['meta'] ) ) {
+				return true;
+			}
+			if ( ! ( 'term' === $kind ? current_user_can( 'edit_term', $id ) : current_user_can( 'edit_post', $id ) ) ) {
+				return new WP_Error( 'rest_cannot_edit', __( 'Sorry, you are not allowed to edit the custom fields of this item.', self::TEXT_DOMAIN ), array( 'status' => rest_authorization_required_code() ) );
+			}
+			try {
+				$ops = self::plan( $kind, $id, $taxonomy, $changes, self::FIELDS );
+				if ( is_wp_error( $ops ) ) {
+					return $ops;
+				}
+				foreach ( $ops['fields'] as $op ) {
+					update_field( $op[0]['key'], $op[1], $ops['acf_id'] ); // Returns false when the value is unchanged; that is fine.
+				}
+				foreach ( $ops['meta'] as $key => $text ) {
+					if ( null === $text ) {
+						'term' === $kind ? delete_term_meta( $id, $key ) : delete_post_meta( $id, $key );
+					} else {
+						'term' === $kind ? update_term_meta( $id, $key, wp_slash( $text ) ) : update_post_meta( $id, $key, wp_slash( $text ) );
+					}
+				}
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_fields_save_failed', __( 'The custom fields could not be saved.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+			return true;
+		}
+
+		/** Tools > MKT SEO Bridge form: save the list of editable meta keys. */
+		public static function save_meta_keys() {
+			if ( ! current_user_can( 'manage_options' ) ) {
+				wp_die( esc_html__( 'Sorry, you are not allowed to change these settings.', self::TEXT_DOMAIN ), 403 );
+			}
+			check_admin_referer( 'mkt_fields_meta_keys' );
+			$raw  = isset( $_POST['mkt_fields_meta_keys'] ) && is_string( $_POST['mkt_fields_meta_keys'] ) ? wp_unslash( $_POST['mkt_fields_meta_keys'] ) : '';
+			$keys = array_values( array_unique( array_filter( preg_split( '/[\s,]+/', $raw ), array( __CLASS__, 'meta_key_allowed' ) ) ) );
+			update_option( self::META_KEYS_OPTION, $keys, false );
+			wp_safe_redirect( admin_url( 'tools.php?page=mkt-seo-bridge&mkt-fields-saved=1' ) );
+			exit;
+		}
+
 		/* ---------- Admin: Tools > MKT SEO Bridge status page ---------- */
 
 		public static function add_status_page() {
@@ -509,7 +1141,14 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			$rows     = array(
 				array( __( 'Bridge version', self::TEXT_DOMAIN ), self::VERSION, true ),
 				array( __( 'SEO plugin', self::TEXT_DOMAIN ), $plugin, (bool) $keys ),
-				array( __( 'REST field', self::TEXT_DOMAIN ), self::FIELD . ' ' . __( 'on posts and pages', self::TEXT_DOMAIN ), true ),
+				array( __( 'REST fields', self::TEXT_DOMAIN ), self::FIELD . ', ' . self::FIELDS . ' ' . __( 'on posts, pages, products, other public post types and their categories and tags', self::TEXT_DOMAIN ), true ),
+				array(
+					__( 'Custom fields', self::TEXT_DOMAIN ),
+					self::acf_active()
+						? sprintf( __( 'Advanced Custom Fields %s', self::TEXT_DOMAIN ), defined( 'ACF_VERSION' ) ? ACF_VERSION : '' )
+						: __( 'Advanced Custom Fields is not active. Only the meta keys listed below can be edited.', self::TEXT_DOMAIN ),
+					self::acf_active(),
+				),
 				array(
 					__( 'Application Passwords', self::TEXT_DOMAIN ),
 					$app_pass ? __( 'Available', self::TEXT_DOMAIN ) : __( 'Disabled on this site (a security plugin or setting may block them). The extension cannot log in until they are allowed.', self::TEXT_DOMAIN ),
@@ -551,6 +1190,20 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					</tbody>
 				</table>
 				<p class="description" style="margin-top:12px;"><?php esc_html_e( 'Only accounts that can edit a post can read or change its SEO fields. Values are saved as plain text (canonical URLs as http/https links); an empty value removes the field.', self::TEXT_DOMAIN ); ?></p>
+
+				<h2><?php esc_html_e( 'Custom fields', self::TEXT_DOMAIN ); ?></h2>
+				<p><?php esc_html_e( 'The extension can read and change the Advanced Custom Fields shown on a post, page, product or category, including rows inside repeaters and flexible content. Each value is checked against the field settings before it is saved. Only accounts that can edit the item can read or change its fields.', self::TEXT_DOMAIN ); ?></p>
+				<?php if ( isset( $_GET['mkt-fields-saved'] ) ) : ?>
+					<div class="notice notice-success inline"><p><?php esc_html_e( 'Editable meta keys saved.', self::TEXT_DOMAIN ); ?></p></div>
+				<?php endif; ?>
+				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="max-width:820px;">
+					<input type="hidden" name="action" value="mkt_fields_save_meta_keys" />
+					<?php wp_nonce_field( 'mkt_fields_meta_keys' ); ?>
+					<p><label for="mkt-fields-meta-keys"><strong><?php esc_html_e( 'Editable meta keys (optional)', self::TEXT_DOMAIN ); ?></strong></label></p>
+					<p class="description"><?php esc_html_e( 'For custom fields that are not made with Advanced Custom Fields: list the post or term meta keys the extension may change, one per line. Only text values can be changed. Leave empty if you use Advanced Custom Fields only.', self::TEXT_DOMAIN ); ?></p>
+					<textarea id="mkt-fields-meta-keys" name="mkt_fields_meta_keys" rows="5" class="large-text code"><?php echo esc_textarea( implode( "\n", array_filter( (array) get_option( self::META_KEYS_OPTION, array() ), 'is_string' ) ) ); ?></textarea>
+					<?php submit_button( __( 'Save meta keys', self::TEXT_DOMAIN ) ); ?>
+				</form>
 			</div>
 			<?php
 		}

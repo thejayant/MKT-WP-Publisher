@@ -164,6 +164,23 @@ Prices, SKU, stock, short description, product categories and gallery go through
 
 Claude confirms the category's current name before saving. Category SEO needs SEO Bridge 1.2.0 or later on the site. With Yoast, only the SEO title, description, focus keyword and canonical are changed; the category's other Yoast settings stay as they are.
 
+## Custom fields (ACF)
+
+On many sites the visible text of state, city, pricing and financing pages is not in the page content but in Advanced Custom Fields (ACF). Products and categories can have extra fields too. These need **SEO Bridge 1.3.0** or later on the site.
+
+> On website-3, show the custom fields of the Virginia page (ID 2549).
+
+> In the Virginia page, second section, change "built tough" to "built for snow". I approve editing the live page.
+
+Claude lists the fields with inspect_fields, then changes only the addressed value with update_fields. That can be one sub field in one row of a repeater or flexible content field. Every other row, image and layout stays exactly as it was. Before anything is saved:
+- the page title is confirmed;
+- each value is checked against the field's settings (type, choices, media library IDs, maximum rows);
+- unknown fields and read-only types (messages, tabs) are refused.
+
+WordPress keeps no revisions of custom fields, so every result includes the previous values (`restore`). Ask Claude to "undo that change" and it writes them back.
+
+Custom fields that are not made with ACF can be opened too. In WordPress go to **Tools → MKT SEO Bridge**, list the meta keys under *Editable meta keys*, and save. Only text values can be changed, and WordPress's own internal keys (`_wp_…`, `_edit_…`) are never editable.
+
 ## Website IDs and prompts
 
 Website groups have stable IDs independent of their friendly names: website-1, website-2, website-3, website-4, and website-5.
