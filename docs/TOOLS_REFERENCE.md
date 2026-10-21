@@ -10,9 +10,17 @@ Every tool except `list_sites` requires `site_id` (pattern `^[a-z0-9]+(?:-[a-z0-
 
 Unknown arguments are always rejected.
 
-**Posts and pages:** `list_posts`, `get_post`, `create_draft`, `update_draft`, `publish_post` and `schedule_post` take an optional `post_type`: `post` (default) or `page`. Pages use `/wp/v2/pages`. They don't take `categories`, `tags` or `excerpt`, but they can have a `parent` page. Keep `post_type` paired with the ID, the same way you keep `site_id`.
+**Post types:** `list_posts`, `get_post`, `list_blocks`, `edit_blocks`, `create_draft`, `update_draft`, `edit_published_post`, `publish_post`, `unpublish_post`, `schedule_post` and `upload_image` (for `featured_for_post_id`) take an optional `post_type`:
+- `post` (default) and `page` need no lookup. Pages use `/wp/v2/pages`; they don't take `categories`, `tags` or `excerpt`, but they can have a `parent` page.
+- **Any other post type the site offers over the REST API** works too, for example `product` (WooCommerce) or `locations`. On first use per site, the tool reads `/wp/v2/types/{type}`, `/wp/v2/taxonomies?type={type}` and the type's schema (`OPTIONS`), then caches them.
+  - `categories` means the type's hierarchical taxonomy (`product_cat` on products), and `tags` its flat one (`product_tag`).
+  - Fields the type's schema lacks are refused.
+  - WordPress internal types (`attachment`, `wp_template`, `wp_block`, …) are refused.
+- `create_draft` refuses `product`: create products in WordPress, so price and stock are set up correctly.
 
-**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only the tools that change public content are `destructiveHint: true`: `publish_post`, `schedule_post`, `edit_published_post` and `unpublish_post`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
+Keep `post_type` paired with the ID, the same way you keep `site_id`.
+
+**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only the tools that change public content are `destructiveHint: true`: `update_term`, `edit_published_post`, `edit_blocks`, `publish_post`, `unpublish_post`, `schedule_post` and `update_product`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
 
 **Plain permalinks:** if `/wp-json/...` returns WordPress's HTML 404 page, the server retries that request once as `/?rest_route=/wp/v2/...`. It keeps using that form for the site until the extension restarts. The retry is safe for writes, because an unrouted 404 means WordPress processed nothing.
 
@@ -223,9 +231,73 @@ Write. **Takes content off the public site.** Use only after the user explicitly
 - Works on `publish`, `private`, `future` (scheduled) and `pending` posts/pages, and sends `{ status: 'draft' }`. An existing draft is returned unchanged, with no write.
 - **Returns `data`:** the summary plus `previous_status`. A formerly scheduled post keeps its future date; the `warning` says to use `schedule_post` again, or `publish_post` with `publish_date` to publish it now.
 
+## list_blocks
+Read-only. `GET /{route}/{post_id}?context=edit` (raw content).
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_type` | post type slug | default `post` |
+| `post_id` | integer ≥ 1, required | |
+
+**Returns `data`:** `{ post_id, post_type, status, title, modified_gmt, uses_blocks, blocks: [{ block, name, text?, inner_blocks?, fields? }], total, truncated }`.
+- `block` is the number to use with `edit_blocks`: `"3"` for a top-level block, `"2.0.1"` for nested ones.
+- Classic HTML between blocks (or a whole classic post) appears as `name: "html"`.
+- `fields` lists an ACF block's data fields (the `_field` keys are hidden).
+- At most 300 entries are listed.
+
+## edit_blocks
+Write. **Use only after the user explicitly approves this site, post and change.** Published content changes immediately.
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_type` | post type slug | default `post` |
+| `post_id` | integer ≥ 1, required | |
+| `changes` | list of 1–50 objects, required | see below |
+| `confirm_title` | string, required | the current title |
+| `confirm_edit` | `true`, required | |
+| `expected_modified_gmt` | string | optional concurrency guard |
+
+Each change is one of:
+- `{ "block": "1", "replace_text": { "find": "…", "with": "…", "all": false } }`: text inside that block's own HTML. Text in nested blocks is targeted by their own number.
+- `{ "replace_text": { "find": "…", "with": "…", "all": false } }`: anywhere in the content, outside block delimiters and attributes.
+- `{ "block": "5", "acf_data": { "field_name": "value" } }`: existing fields of an ACF block. Text, numbers or true/false.
+
+**Rules:**
+- The text must match exactly once, unless `all: true`. If it isn't found as written, it's retried HTML-escaped (`&` → `&amp;`).
+- Text containing `<!--` or `-->` is refused. Changes may not overlap.
+- After editing, the content must parse to exactly the same block structure, or nothing is saved.
+- ACF block attributes are re-serialized the way WordPress does (`--`, `<`, `>`, `&` and `\"` escaped), so the block comment stays valid.
+- Only `content` is sent.
+
+**Returns `data`:** summary, `changes` (before/after per edit), `edits`, `live`, `undo` (WordPress Revisions), and a `warning` if WordPress altered the content on save, for example removing HTML the account may not post.
+
+## list_terms / get_term / update_term
+Any taxonomy: `category`, `post_tag`, `product_cat`, `product_tag`, or custom. `category` and `post_tag` need no lookup. Others are looked up once per site via `/wp/v2/taxonomies/{taxonomy}`. WordPress internal taxonomies (`nav_menu`, `post_format`, …) are refused.
+
+- `list_terms(taxonomy, search?, parent?, page?)` returns `{ items: [{ term_id, taxonomy, name, slug, parent?, count, link }], page, total?, total_pages?, has_more }`, 100 per page.
+- `get_term(taxonomy, term_id)` returns `{ term_id, taxonomy, name, slug, description, parent?, count, link, seo? }`.
+- `update_term(taxonomy, term_id, name?, slug?, description?, parent?, seo?, confirm_name, confirm_edit)`. **Write; the term's archive page changes immediately.**
+  - `confirm_name` must match the current name.
+  - A new slug that's taken is refused, and a changed slug warns that the archive URL changed.
+  - `parent` is only for hierarchical taxonomies.
+  - `seo` needs SEO Bridge 1.2.0+ (it's checked with `OPTIONS` before anything is saved). When `seo` is sent, the current name is sent as well, so WordPress runs a normal term save and Yoast/Rank Math refresh their cached data.
+
+## get_product / update_product
+WooCommerce store data, through `wc/v3`. Needs WooCommerce, and an account with the Shop Manager or Administrator role.
+
+- `get_product(product_id)` returns `{ product_id, name, type, status, permalink, sku, regular_price, sale_price, price, on_sale, stock_status, manage_stock, stock_quantity, short_description, categories, images, attributes, variations, date_modified_gmt }`.
+- `update_product(product_id, regular_price?, sale_price?, sku?, stock_status?, short_description?, categories?, images?, confirm_title, confirm_edit, expected_modified_gmt?)`. **Write; live in the store immediately.**
+  - Prices are plain numbers as text (`"1299.99"`). `sale_price: ""` removes the sale; `regular_price` can't be emptied.
+  - The sale price must be lower than the regular price.
+  - Variable products are refused for prices, since those are set per variation.
+  - `categories` are `product_cat` IDs; `images` are media IDs, and the first is the main image.
+  - `confirm_title` must match the current product name (HTML entities are decoded before comparing).
+  - Sent as `PUT /wc/v3/products/{id}`. Returns the summary plus `changed` (before/after per field).
+- For a product's title, long description, slug and SEO, use `update_draft` / `edit_published_post` / `edit_blocks` with `post_type: "product"`.
+
 ## SEO fields
 
-`create_draft`, `update_draft` and `edit_published_post` accept `seo: { title?, description?, focus_keyword?, canonical? }`. An empty string clears a value. `canonical` must be a full `http://` or `https://` URL.
+`create_draft`, `update_draft`, `edit_published_post` (any post type) and `update_term` accept `seo: { title?, description?, focus_keyword?, canonical? }`. An empty string clears a value. `canonical` must be a full `http://` or `https://` URL.
 
 This needs the **MKT Publisher SEO Bridge for Yoast & Rank Math** plugin (`wordpress-plugin/` in the source) on each site, plus **Yoast SEO** or **Rank Math**. Neither SEO plugin exposes these fields to the REST API on its own. The bridge adds a REST field, `mkt_seo`, that maps to:
 
@@ -235,6 +307,12 @@ This needs the **MKT Publisher SEO Bridge for Yoast & Rank Math** plugin (`wordp
 | `description` | `_yoast_wpseo_metadesc` | `rank_math_description` | 1,000 | 1.0.0+ |
 | `focus_keyword` | `_yoast_wpseo_focuskw` | `rank_math_focus_keyword` | 200 | 1.0.0+ |
 | `canonical` | `_yoast_wpseo_canonical` | `rank_math_canonical_url` | 2,048 | 1.1.0+ |
+
+**Products, custom post types and terms (bridge 1.2.0+):**
+- **Products and custom post types:** from 1.2.0, the field is on every public post type, stored in the same post meta as above.
+- **Categories, tags and product categories:** `update_term` uses the same `seo` object.
+  - **Yoast** keeps term SEO in the option `wpseo_taxonomy_meta` → `[taxonomy][term_id]` → `wpseo_title`, `wpseo_desc`, `wpseo_focuskw`, `wpseo_canonical`. The bridge changes only those four keys, so the term's other Yoast settings (noindex, social and so on) stay as they are.
+  - **Rank Math** keeps it in term meta: `rank_math_title`, `rank_math_description`, `rank_math_focus_keyword`, `rank_math_canonical_url`.
 
 Before any write that includes `seo`, the server sends `OPTIONS` to the endpoint to read the bridge's schema: the active SEO plugin, and from 1.1.0 the bridge version and supported fields. The call fails **before anything is saved** if:
 - the bridge is missing;

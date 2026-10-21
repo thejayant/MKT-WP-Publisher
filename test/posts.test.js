@@ -94,7 +94,7 @@ test('F7: pages use /pages, page preview links and parent; post-only fields are 
  await call('publish_post',{site_id:'site-b',post_type:'page',post_id:50,confirm_title:'About',confirm_publish:true});assert(m.calls.slice(4).every(c=>c.u.includes('/wp/v2/pages/50')));
  for(const extra of [{categories:[1]},{tags:[2]},{excerpt:'e'}])await assert.rejects(call('create_draft',{site_id:'site-b',post_type:'page',title:'A',content:'C',slug:'a',...extra}),/posts only/);
  await assert.rejects(call('create_draft',{site_id:'site-b',title:'A',content:'C',slug:'a',parent:3}),/pages only/);
- await assert.rejects(call('get_post',{site_id:'site-b',post_type:'product',post_id:1}),/must be one of: post, page/);assert.equal(m.calls.length,6);
+ await assert.rejects(call('get_post',{site_id:'site-b',post_type:'Product!',post_id:1}),/must be a post type slug/);assert.equal(m.calls.length,6);
 });
 test('F12: content_format markdown is converted before sending; html is untouched',async()=>{
  const m=mock([[],{id:60,status:'draft'},{id:60,status:'draft'},{id:60,status:'draft'}]);const call=makeService(env,m.f);

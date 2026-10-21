@@ -1,6 +1,6 @@
 # MKT WP Publisher
 
-**Version 1.6.0 · Developed by Jayant**
+**Version 1.7.0 · Developed by Jayant**
 
 A Claude Desktop extension that lets Claude draft, schedule, publish and edit blog posts and pages on **up to five WordPress websites**. Each website has its own login (WordPress Application Password) and its own local blog image folder. Content is always created as a draft first. Publishing, scheduling, editing a live post and unpublishing each need your explicit approval.
 
@@ -23,17 +23,22 @@ A Claude Desktop extension that lets Claude draft, schedule, publish and edit bl
 | `publish_post` | Publishes a draft now, or with a back date, only with approval and the exact title. |
 | `unpublish_post` | Moves a published or scheduled post back to draft (also unschedules), only with approval and the exact title. |
 | `schedule_post` | Schedules a draft for a set date and time, only with approval and the exact title. |
+| `list_blocks` / `edit_blocks` | Shows a page's blocks, then changes text in one block (or one ACF block field) and keeps everything else exactly as stored, with a before/after diff. |
+| `list_terms` / `get_term` / `update_term` | Lists, reads and edits categories, tags and WooCommerce product categories: name, description, slug, parent, SEO. |
+| `get_product` / `update_product` | Reads and changes WooCommerce store data: price, sale price, SKU, stock, short description, categories, gallery. |
+
+The post tools work on any post type the site offers: posts, pages, WooCommerce products (`product`) and custom types such as `locations`.
 
 Every draft comes with a `preview_url` for review. Reads are retried automatically when a busy host answers "try again later". An optional `expected_modified_gmt` check stops Claude from overwriting changes someone else made in WordPress in the meantime.
 
 **SEO fields** (Yoast SEO or Rank Math: SEO title, meta description, focus keyword, canonical URL) need the small companion plugin **MKT Publisher SEO Bridge for Yoast & Rank Math** installed on each site. See [the user guide](docs/USER_GUIDE.md#seo-fields-yoast-seo--rank-math).
 
-Not included: custom post types, deleting content, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
+Not included: creating new WooCommerce products, editing ACF custom fields outside blocks (planned, see [docs/SITE-EDITING-PLAN.md](docs/SITE-EDITING-PLAN.md)), deleting content, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 
 ## Quick start
 
 1. **Create an Application Password** in each WordPress site: *Users → Profile → Application Passwords*. Use an **Editor or Administrator** account if you want to credit posts to other authors.
-2. **Install** `mkt-wp-publisher-1.6.0.mcpb` from Claude Desktop's extension settings.
+2. **Install** `mkt-wp-publisher-1.7.0.mcpb` from Claude Desktop's extension settings.
 3. **Fill in Website 1**: name, HTTPS URL (for example `https://example.com`), username, Application Password and blog image folder. Turn on **Enable website 1**. Repeat for Websites 2–5 if you need them.
 4. *(Optional, for SEO fields)* Upload `mkt-wp-publisher-seo-bridge.zip` in each WordPress site under *Plugins → Add New → Upload Plugin*, then activate it.
 5. **Restart the extension**, then ask Claude:

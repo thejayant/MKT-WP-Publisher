@@ -1,5 +1,43 @@
 # Changelog
 
+## MKT WP Publisher 1.7.0 (with SEO Bridge 1.2.0)
+
+Steps 1–3 of docs/SITE-EDITING-PLAN.md.
+
+Step 1, block-safe edits:
+- New `list_blocks`: a numbered outline of a post's blocks, with each block's text and ACF block fields.
+- New `edit_blocks`: changes text inside one block, one ACF block field, or exact text anywhere in the content. Every other byte is kept as stored.
+  - The block structure is re-checked before saving.
+  - Ambiguous matches are refused.
+  - It returns a before/after diff, and the previous version stays in WordPress revisions.
+  - It needs the current title and `confirm_edit:true`.
+- New `server/blocks.js`: a WordPress block-grammar parser and serializer that escapes block attributes the same way WordPress does.
+
+Step 2, products and custom post types:
+- `post_type` accepts any post type the site offers over the REST API (`product`, `locations`, …). The tool looks up each type once per site: its REST route, its own taxonomies (`categories`/`tags` mean `product_cat`/`product_tag` on products) and the fields its schema accepts. WordPress internal types are refused.
+- New `get_product` / `update_product` (WooCommerce `wc/v3` API) for regular/sale price, SKU, stock status, short description, product categories and gallery images. Checks:
+  - the product name must be confirmed;
+  - the sale price must be lower than the regular price;
+  - variable products are refused, since their prices are set per variation;
+  - an optional `date_modified_gmt` guard.
+- `create_draft` refuses new WooCommerce products. Create them in WordPress so price and stock are set up, then edit them here.
+- `upload_image` with `featured_for_post_id` works for any post type.
+- The HTTP client supports other REST namespaces (`wc/v3`).
+
+Step 3, categories and tags:
+- New `list_terms` / `get_term` / `update_term` for any taxonomy: name, slug, description, parent and SEO.
+  - The current name must be confirmed.
+  - Slug collisions are refused.
+  - When SEO changes, the name is sent again, so WordPress runs a normal term save and SEO plugins refresh their cache.
+
+SEO Bridge 1.2.0:
+- The `mkt_seo` field is now on every public post type (products, custom post types) and every public taxonomy (categories, tags, product categories).
+- Term SEO goes where each plugin keeps it: Yoast's `wpseo_taxonomy_meta` option (other Yoast term settings are kept), or Rank Math's term meta. It's saved before the term save, the same way post SEO is saved before the post save.
+- Callbacks for a post type and a taxonomy that share a name keep to their own objects.
+- 4 new harness scenarios (15 in total). All pass on PHP 7.4.33, 8.1.34 and 8.5.11.
+
+Tools: 23 (was 16). Tool-call migration: none. `post_type` values other than post/page used to be refused; they are now looked up on the site.
+
 ## MKT WP Publisher 1.6.0 (with SEO Bridge 1.1.0)
 
 SEO Bridge plugin, renamed **MKT Publisher SEO Bridge for Yoast & Rank Math**:

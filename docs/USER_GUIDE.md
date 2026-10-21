@@ -1,4 +1,4 @@
-# MKT WP Publisher 1.6.0 — User Guide
+# MKT WP Publisher 1.7.0 — User Guide
 
 Developed by Jayant.
 
@@ -6,7 +6,7 @@ Configure up to five WordPress websites using ordinary extension fields. Each we
 
 ## Install and configure
 
-Install mkt-wp-publisher-1.6.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
+Install mkt-wp-publisher-1.7.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
 
 Open the extension settings and fill the labeled Website 1 group:
 
@@ -23,7 +23,7 @@ To add another website, fill and enable Website 2. Repeat for Website 3, 4, and 
 
 These are labeled field groups in the native settings, not custom collapsible panels. All five groups may be visible. The documented MCPB settings format supports fields, checkboxes, and folder pickers; it does not provide a dynamic Add Website button or conditional section rendering. The host controls their presentation. [MCPB settings specification](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md).
 
-Reload/restart the extension after saving settings. Verify version 1.6.0 and sixteen tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
+Reload/restart the extension after saving settings. Verify version 1.7.0 and 23 tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
 
 ## Separate blog image folders
 
@@ -135,6 +135,34 @@ Pages don't have categories, tags or an excerpt, but they can have a parent page
 Claude can send content as Markdown and the extension converts it to HTML first. Ask for it ("create the draft from this Markdown") or let Claude choose. Supported: headings, bold/italic/strikethrough, links, images, lists (including nested), quotes, code, tables and plain HTML blocks.
 
 In the block editor the result shows as a single Classic block. Click **Convert to blocks** if you want to edit it block by block.
+
+## Editing block-built pages safely
+
+Pages built with the block editor (headings, columns, ACF blocks) must not be replaced wholesale, or their layout is lost. Ask Claude to change specific text, and it will use list_blocks and edit_blocks:
+
+> On website-1, in the Florida page (ID 1941), change "all 67 Florida counties" to "every county in Florida". Show me the change first. I approve editing the live page.
+
+Claude reads the page's blocks, changes only that text, checks the block structure is unchanged, and shows a before/after diff. Text inside ACF blocks (for example an FAQ question) is changed by field name. If the text appears more than once, Claude asks which occurrence you mean. To undo, open the page in WordPress, then **Revisions**.
+
+## Products and other post types
+
+The post tools also work for WooCommerce products and custom post types (for example `locations`). Name the type in your request:
+
+> On website-1, show product 9329 and its price.
+
+> Set the sale price of product 9329 ("26x35x10 Triple Wide Carport") to 8995. I approve this store change.
+
+> Update the SEO title of product 9329 to "Triple Wide Carport 26x35 | AMB". I approve editing the live product.
+
+Prices, SKU, stock, short description, product categories and gallery go through WooCommerce (update_product). The long description, title, slug and SEO go through the normal post tools with post type `product`. The connected account needs the Shop Manager or Administrator role. New products are created in WordPress itself, so price and stock are set up properly.
+
+## Categories, tags and product categories
+
+> List the product categories on website-1.
+
+> Change the description of product category "Metal Carports" to "…" and its SEO title to "Metal Carports for Sale | AMB". I approve.
+
+Claude confirms the category's current name before saving. Category SEO needs SEO Bridge 1.2.0 or later on the site. With Yoast, only the SEO title, description, focus keyword and canonical are changed; the category's other Yoast settings stay as they are.
 
 ## Website IDs and prompts
 

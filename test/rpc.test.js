@@ -14,7 +14,7 @@ test('active cancellation aborts the read and prevents follow-up publishing POST
 });
 test('startup discovery and malformed envelope response',async()=>{
  const r=await runChild([{jsonrpc:'2.0',id:0,method:'initialize',params:{protocolVersion:'2025-06-18'}},{jsonrpc:'2.0',method:'notifications/initialized'},{jsonrpc:'2.0',id:1,method:'tools/list'},'null',{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'list_sites',arguments:{}}}]);
- assert.equal(r.find(x=>x.id===0).result.serverInfo.version,VERSION);assert.equal(r.find(x=>x.id===1).result.tools.length,16);assert.equal(r.find(x=>x.id===null).error.code,-32600);assert.equal(r.find(x=>x.id===2).result.isError,true);
+ assert.equal(r.find(x=>x.id===0).result.serverInfo.version,VERSION);assert.equal(r.find(x=>x.id===1).result.tools.length,23);assert.equal(r.find(x=>x.id===null).error.code,-32600);assert.equal(r.find(x=>x.id===2).result.isError,true);
 });
 test('cancelled queued publish never reaches fetch; next queued request still runs',async()=>{
  const boot='Object.assign(process.env,'+JSON.stringify(env)+');global.fetch=async(u,o)=>{if(o.method==="POST"){process.stderr.write("Unexpected write");throw new Error("Unexpected write");}await new Promise(r=>setTimeout(r,60));return {ok:true,json:async()=>({id:1,status:"draft",capabilities:{}})}}';
@@ -28,7 +28,7 @@ test('ping and tools/list are answered while a slow tool call is still running',
 });
 test('B8: only tools that change public content are destructive; update_draft is idempotent',()=>{
  const a=Object.fromEntries(tools.map(t=>[t.name,t.annotations]));
- assert.deepEqual(tools.filter(t=>t.annotations.destructiveHint).map(t=>t.name),['edit_published_post','publish_post','unpublish_post','schedule_post']);
+ assert.deepEqual(tools.filter(t=>t.annotations.destructiveHint).map(t=>t.name),['update_term','edit_published_post','edit_blocks','publish_post','unpublish_post','schedule_post','update_product']);
  assert.equal(a.update_draft.idempotentHint,true);assert.equal(a.create_draft.idempotentHint,false);assert.equal(a.upload_image.idempotentHint,false);assert.equal(a.publish_post.readOnlyHint,false);
  for(const t of tools.filter(t=>t.annotations.readOnlyHint))assert.equal(t.annotations.idempotentHint,true);
 });

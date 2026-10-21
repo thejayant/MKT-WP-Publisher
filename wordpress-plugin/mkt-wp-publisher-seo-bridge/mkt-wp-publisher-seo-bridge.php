@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MKT Publisher SEO Bridge for Yoast & Rank Math
  * Description:       Lets the MKT WP Publisher extension for Claude read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO or Rank Math, through the WordPress REST API.
- * Version:           1.1.0
+ * Version:           1.2.0
  * Author:            Jayant
  * Requires at least: 5.6
  * Requires PHP:      7.4
@@ -11,8 +11,9 @@
  * Text Domain:       mkt-wp-publisher-seo-bridge
  * Update URI:        false
  *
- * Adds one REST field, "mkt_seo", to posts and pages (edit context only):
- *   { "plugin": "yoast" | "rank-math" | "none", "version": "1.1.0",
+ * Adds one REST field, "mkt_seo", to every public post type (posts, pages, products, …) and taxonomy
+ * (categories, tags, product categories, …), edit context only:
+ *   { "plugin": "yoast" | "rank-math" | "none", "version": "1.2.0",
  *     "title": "", "description": "", "focus_keyword": "", "canonical": "" }
  * Writing it requires permission to edit that post. An empty string removes a value.
  *
@@ -41,7 +42,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 	final class MKT_SEO_Bridge {
 
-		const VERSION     = '1.1.0';
+		const VERSION     = '1.2.0';
 		const FIELD       = 'mkt_seo';
 		const TEXT_DOMAIN = 'mkt-wp-publisher-seo-bridge';
 
@@ -106,12 +107,19 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			return defined( 'WPSEO_VERSION' ) && self::rank_math_active();
 		}
 
-		/** The post types the bridge supports (the extension works with posts and pages). */
+		/** Public post types available over the REST API: posts, pages, WooCommerce products, custom post types. */
 		public static function post_types() {
-			return array( 'post', 'page' );
+			$types = function_exists( 'get_post_types' ) ? get_post_types( array( 'public' => true, 'show_in_rest' => true ), 'names' ) : array( 'post', 'page' );
+			return array_values( array_diff( array_values( (array) $types ), array( 'attachment' ) ) );
 		}
 
-		/** Register the REST field and the early-save filters. */
+		/** Public taxonomies available over the REST API: categories, tags, product categories and tags, custom taxonomies. */
+		public static function taxonomies() {
+			$taxonomies = function_exists( 'get_taxonomies' ) ? get_taxonomies( array( 'public' => true, 'show_in_rest' => true ), 'names' ) : array();
+			return array_values( array_diff( array_values( (array) $taxonomies ), array( 'nav_menu', 'post_format', 'wp_pattern_category', 'link_category' ) ) );
+		}
+
+		/** Register the REST field and the early-save filters on post types and taxonomies. */
 		public static function register() {
 			foreach ( self::post_types() as $post_type ) {
 				if ( ! post_type_exists( $post_type ) ) {
@@ -124,6 +132,21 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					array(
 						'get_callback'    => array( __CLASS__, 'get_field' ),
 						'update_callback' => array( __CLASS__, 'update_field' ),
+						'schema'          => self::schema(),
+					)
+				);
+			}
+			foreach ( self::taxonomies() as $taxonomy ) {
+				if ( ! taxonomy_exists( $taxonomy ) ) {
+					continue;
+				}
+				add_filter( "rest_pre_insert_{$taxonomy}", array( __CLASS__, 'pre_insert_term' ), 10, 2 );
+				register_rest_field(
+					$taxonomy,
+					self::FIELD,
+					array(
+						'get_callback'    => array( __CLASS__, 'get_term_field' ),
+						'update_callback' => array( __CLASS__, 'update_term_field' ),
 						'schema'          => self::schema(),
 					)
 				);
@@ -234,7 +257,8 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 		 * request, or not a post object (for example another plugin's WP_Error), passes through unchanged.
 		 */
 		public static function pre_insert( $prepared_post, $request ) {
-			if ( ! is_object( $prepared_post ) || is_wp_error( $prepared_post ) || empty( $prepared_post->ID ) ) {
+			// Posts always carry post_type here; a term with the same hook name (a taxonomy named like a post type) does not.
+			if ( ! is_object( $prepared_post ) || is_wp_error( $prepared_post ) || empty( $prepared_post->ID ) || empty( $prepared_post->post_type ) ) {
 				return $prepared_post;
 			}
 			if ( ! ( $request instanceof WP_REST_Request ) || ! $request->has_param( self::FIELD ) ) {
@@ -290,6 +314,155 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 						delete_post_meta( $post_id, $keys[ $field ] );
 					} else {
 						update_post_meta( $post_id, $keys[ $field ], wp_slash( $text ) );
+					}
+				}
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_seo_save_failed', __( 'The SEO fields could not be saved.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+			return true;
+		}
+
+		/* ---------- Categories, tags and other terms ---------- */
+
+		/** @var array<int,bool> Term IDs whose SEO values were saved before the term itself (see pre_insert_term). */
+		private static $terms_saved_early = array();
+
+		/**
+		 * Where term SEO lives. Yoast keeps it in the "wpseo_taxonomy_meta" option ([taxonomy][term_id][wpseo_*]);
+		 * Rank Math keeps it in term meta under the same keys it uses for posts.
+		 */
+		public static function term_keys() {
+			$keys = self::keys();
+			if ( ! $keys ) {
+				return null;
+			}
+			if ( 'yoast' === $keys['plugin'] ) {
+				return array(
+					'plugin'        => 'yoast',
+					'title'         => 'wpseo_title',
+					'description'   => 'wpseo_desc',
+					'focus_keyword' => 'wpseo_focuskw',
+					'canonical'     => 'wpseo_canonical',
+				);
+			}
+			return $keys; // Rank Math: rank_math_title, rank_math_description, … as term meta.
+		}
+
+		/** Read one SEO value of a term. */
+		private static function term_value( $term_id, $taxonomy, $key ) {
+			$keys = self::term_keys();
+			if ( 'yoast' === $keys['plugin'] ) {
+				$all = get_option( 'wpseo_taxonomy_meta', array() );
+				return isset( $all[ $taxonomy ][ $term_id ][ $key ] ) && is_scalar( $all[ $taxonomy ][ $term_id ][ $key ] ) ? (string) $all[ $taxonomy ][ $term_id ][ $key ] : '';
+			}
+			return (string) get_term_meta( $term_id, $key, true );
+		}
+
+		/** REST read for terms: current values for users who can edit the term, else null. Never throws. */
+		public static function get_term_field( $object ) {
+			try {
+				$term_id  = isset( $object['id'] ) ? (int) $object['id'] : 0;
+				$taxonomy = isset( $object['taxonomy'] ) ? (string) $object['taxonomy'] : '';
+				if ( ! $term_id || '' === $taxonomy || ! current_user_can( 'edit_term', $term_id ) ) {
+					return null;
+				}
+				$keys  = self::term_keys();
+				$value = array(
+					'plugin'  => $keys ? $keys['plugin'] : 'none',
+					'version' => self::VERSION,
+				);
+				foreach ( array_keys( self::limits() ) as $field ) {
+					$value[ $field ] = $keys ? self::term_value( $term_id, $taxonomy, $keys[ $field ] ) : '';
+				}
+				return $value;
+			} catch ( \Throwable $e ) {
+				return null;
+			}
+		}
+
+		/**
+		 * Existing terms: save the SEO values before WordPress saves the term, so the "edited_term" save that follows
+		 * refreshes Yoast's cached data from the new values. Anything else passes through unchanged.
+		 */
+		public static function pre_insert_term( $prepared_term, $request ) {
+			if ( ! is_object( $prepared_term ) || is_wp_error( $prepared_term ) || ! empty( $prepared_term->post_type ) ) {
+				return $prepared_term;
+			}
+			if ( ! ( $request instanceof WP_REST_Request ) || ! $request->has_param( self::FIELD ) ) {
+				return $prepared_term;
+			}
+			$term_id = (int) $request->get_param( 'id' );
+			$term    = $term_id && function_exists( 'get_term' ) ? get_term( $term_id ) : null;
+			if ( ! $term || is_wp_error( $term ) || empty( $term->taxonomy ) ) {
+				return $prepared_term; // New term: saved by update_term_field once it exists.
+			}
+			$value = self::editable( $request->get_param( self::FIELD ) );
+			if ( ! $value ) {
+				return $prepared_term;
+			}
+			$saved = self::save_term( $term_id, $term->taxonomy, $value );
+			if ( is_wp_error( $saved ) ) {
+				return $saved;
+			}
+			self::$terms_saved_early[ $term_id ] = true;
+			return $prepared_term;
+		}
+
+		/** REST write after the term is saved: new terms. */
+		public static function update_term_field( $value, $term ) {
+			$term_id  = is_object( $term ) && isset( $term->term_id ) ? (int) $term->term_id : 0;
+			$taxonomy = is_object( $term ) && isset( $term->taxonomy ) ? (string) $term->taxonomy : '';
+			if ( ! $term_id || '' === $taxonomy ) {
+				return true;
+			}
+			if ( ! empty( self::$terms_saved_early[ $term_id ] ) ) {
+				unset( self::$terms_saved_early[ $term_id ] );
+				return true;
+			}
+			$editable = self::editable( $value );
+			return $editable ? self::save_term( $term_id, $taxonomy, $editable ) : true;
+		}
+
+		/**
+		 * Save SEO values for one term. Only keys present are touched; an empty string deletes.
+		 *
+		 * @return true|WP_Error
+		 */
+		public static function save_term( $term_id, $taxonomy, array $value ) {
+			$keys = self::term_keys();
+			if ( ! $keys ) {
+				return true;
+			}
+			if ( ! current_user_can( 'edit_term', $term_id ) ) {
+				return new WP_Error( 'rest_cannot_edit', __( 'Sorry, you are not allowed to edit the SEO fields of this term.', self::TEXT_DOMAIN ), array( 'status' => rest_authorization_required_code() ) );
+			}
+			try {
+				$clean = array();
+				foreach ( self::limits() as $field => $max ) {
+					if ( ! array_key_exists( $field, $value ) ) {
+						continue;
+					}
+					$text            = 'canonical' === $field ? esc_url_raw( trim( $value[ $field ] ), array( 'http', 'https' ) ) : sanitize_text_field( $value[ $field ] );
+					$clean[ $field ] = function_exists( 'mb_substr' ) ? mb_substr( $text, 0, $max ) : substr( $text, 0, $max );
+				}
+				if ( 'yoast' === $keys['plugin'] ) {
+					$all = get_option( 'wpseo_taxonomy_meta', array() );
+					$all = is_array( $all ) ? $all : array();
+					foreach ( $clean as $field => $text ) {
+						if ( '' === $text ) {
+							unset( $all[ $taxonomy ][ $term_id ][ $keys[ $field ] ] );
+						} else {
+							$all[ $taxonomy ][ $term_id ][ $keys[ $field ] ] = $text;
+						}
+					}
+					update_option( 'wpseo_taxonomy_meta', $all );
+				} else {
+					foreach ( $clean as $field => $text ) {
+						if ( '' === $text ) {
+							delete_term_meta( $term_id, $keys[ $field ] );
+						} else {
+							update_term_meta( $term_id, $keys[ $field ], wp_slash( $text ) );
+						}
 					}
 				}
 			} catch ( \Throwable $e ) {

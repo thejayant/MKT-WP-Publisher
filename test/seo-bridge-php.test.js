@@ -25,6 +25,10 @@ const SCENARIOS = [
   'storage-failure',
   'custom-site-without-pages',
   'admin-page',
+  'all-post-types-and-taxonomies',
+  'term-yoast',
+  'term-rank-math',
+  'term-permissions-and-conflicts',
 ];
 
 test('SEO Bridge plugin: PHP syntax', {skip}, () => {

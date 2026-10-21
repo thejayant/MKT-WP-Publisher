@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mkt-wp-publisher",
   "display_name": "MKT WP Publisher",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "author": {
     "name": "Jayant"
@@ -347,11 +347,15 @@
     },
     {
       "name": "list_posts",
-      "description": "Find drafts, posts or pages by title or status."
+      "description": "Find drafts, posts, pages, products or other post types by title or status."
     },
     {
       "name": "get_post",
       "description": "Read a post or page for review, including SEO fields."
+    },
+    {
+      "name": "list_blocks",
+      "description": "List the blocks of a post, page or product with their text and ACF fields."
     },
     {
       "name": "upload_image",
@@ -360,6 +364,18 @@
     {
       "name": "create_term",
       "description": "Create a category or tag (no duplicates)."
+    },
+    {
+      "name": "list_terms",
+      "description": "List categories, tags or product categories."
+    },
+    {
+      "name": "get_term",
+      "description": "Read a category, tag or product category, including SEO fields."
+    },
+    {
+      "name": "update_term",
+      "description": "Edit a category or product category: name, description, slug, SEO."
     },
     {
       "name": "create_draft",
@@ -374,6 +390,10 @@
       "description": "Edit a live post: content, images, SEO title/description; the title must be confirmed."
     },
     {
+      "name": "edit_blocks",
+      "description": "Block-safe edit: change text in one block or an ACF block field; the title must be confirmed."
+    },
+    {
       "name": "publish_post",
       "description": "Publish a draft now or with a back date; the title must be confirmed."
     },
@@ -384,6 +404,14 @@
     {
       "name": "schedule_post",
       "description": "Schedule a draft for a future date and time; the title must be confirmed."
+    },
+    {
+      "name": "get_product",
+      "description": "Read a WooCommerce product with price, stock and images."
+    },
+    {
+      "name": "update_product",
+      "description": "Change product price, sale price, SKU, stock, short description or images; the name must be confirmed."
     }
   ],
   "icon": "assets/icon.png",

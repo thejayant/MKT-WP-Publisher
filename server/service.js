@@ -13,6 +13,7 @@ const handlers = {
   ...require('./tools/taxonomy.js'),
   ...require('./tools/media.js'),
   ...require('./tools/posts.js'),
+  ...require('./tools/products.js'),
 };
 
 /**
@@ -28,7 +29,7 @@ function makeService(env = process.env, fetcher = global.fetch, options = {}) {
   const log = debug ? options.log || (line => process.stderr.write('[mkt-wp-publisher] ' + line + '\n')) : null;
   const client = createClient(fetcher, {timeouts: options.timeouts, sleep: options.sleep, log});
   // State that lives as long as the server process.
-  const state = {seoPlugins: new Map()};
+  const state = {seoPlugins: new Map(), postTypes: new Map(), taxonomies: new Map()};
 
   return async function call(name, args = {}, signal) {
     const definition = tools.find(t => t.name === name);

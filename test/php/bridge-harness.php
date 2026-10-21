@@ -87,6 +87,41 @@ function is_admin() {
 function plugin_basename( $file ) {
 	return basename( dirname( $file ) ) . '/' . basename( $file );
 }
+function get_post_types( $args = array(), $output = 'names' ) {
+	$all = array_merge( $GLOBALS['wp']['types'], array( 'attachment' ) );
+	return array_combine( $all, $all );
+}
+function get_taxonomies( $args = array(), $output = 'names' ) {
+	$all = $GLOBALS['wp']['taxonomies'] ?? array( 'category', 'post_tag', 'nav_menu', 'post_format' );
+	return array_combine( $all, $all );
+}
+function taxonomy_exists( $taxonomy ) {
+	return in_array( $taxonomy, $GLOBALS['wp']['taxonomies'] ?? array( 'category', 'post_tag', 'nav_menu', 'post_format' ), true );
+}
+function get_term( $id ) {
+	return $GLOBALS['wp']['terms'][ $id ] ?? null;
+}
+function get_term_meta( $id, $key, $single = false ) {
+	if ( ! empty( $GLOBALS['wp']['meta_throws'] ) ) {
+		throw new RuntimeException( 'database gone' );
+	}
+	return $GLOBALS['wp']['term_meta'][ $id ][ $key ] ?? '';
+}
+function update_term_meta( $id, $key, $value ) {
+	$GLOBALS['wp']['term_meta'][ $id ][ $key ] = stripslashes( $value );
+	return true;
+}
+function delete_term_meta( $id, $key ) {
+	unset( $GLOBALS['wp']['term_meta'][ $id ][ $key ] );
+	return true;
+}
+function get_option( $name, $default = false ) {
+	return $GLOBALS['wp']['options'][ $name ] ?? $default;
+}
+function update_option( $name, $value ) {
+	$GLOBALS['wp']['options'][ $name ] = $value;
+	return true;
+}
 function post_type_exists( $type ) {
 	return in_array( $type, $GLOBALS['wp']['types'], true );
 }
@@ -191,7 +226,8 @@ function rest_update( $post_id, $raw, $type = 'post' ) {
 	}
 	$clean   = call_user_func( $args['sanitize_callback'], $raw );
 	$request = new WP_REST_Request( array( 'id' => $post_id, 'mkt_seo' => $clean ) );
-	$post    = apply_filters( "rest_pre_insert_{$type}", (object) array( 'ID' => $post_id ), $request );
+	// WP_REST_Posts_Controller::prepare_item_for_database always sets post_type on the prepared post.
+	$post    = apply_filters( "rest_pre_insert_{$type}", (object) array( 'ID' => $post_id, 'post_type' => $type ), $request );
 	if ( is_wp_error( $post ) ) {
 		return $post;
 	}
@@ -202,8 +238,100 @@ function rest_update( $post_id, $raw, $type = 'post' ) {
 	return true;
 }
 
+/** Same flow for terms: WP_REST_Terms_Controller passes the request (with id) to rest_pre_insert_{taxonomy}. */
+function rest_update_term( $term_id, $taxonomy, $raw ) {
+	$args  = field( $taxonomy )['schema']['arg_options'];
+	$valid = call_user_func( $args['validate_callback'], $raw, null, 'mkt_seo' );
+	if ( is_wp_error( $valid ) ) {
+		return $valid;
+	}
+	$clean   = call_user_func( $args['sanitize_callback'], $raw );
+	$request = new WP_REST_Request( array( 'id' => $term_id, 'mkt_seo' => $clean, 'name' => 'Same name' ) );
+	$term    = apply_filters( "rest_pre_insert_{$taxonomy}", (object) array( 'name' => 'Same name' ), $request );
+	if ( is_wp_error( $term ) ) {
+		return $term;
+	}
+	// What an SEO plugin would read during the edited_term action that wp_update_term fires next.
+	$GLOBALS['wp']['seo_at_term_save'] = array( 'option' => $GLOBALS['wp']['options']['wpseo_taxonomy_meta'] ?? array(), 'meta' => $GLOBALS['wp']['term_meta'][ $term_id ] ?? array() );
+	return call_user_func( field( $taxonomy )['update_callback'], $clean, (object) array( 'term_id' => $term_id, 'taxonomy' => $taxonomy ) );
+}
+
 // ---- scenarios ----------------------------------------------------------------------------------------------
 switch ( $scenario ) {
+	case 'all-post-types-and-taxonomies':
+		$GLOBALS['wp']['types']      = array( 'post', 'page', 'product', 'locations' );
+		$GLOBALS['wp']['taxonomies'] = array( 'category', 'post_tag', 'product_cat', 'product_tag', 'nav_menu', 'post_format', 'wp_pattern_category' );
+		define( 'WPSEO_VERSION', '25.0' );
+		require $plugin;
+		boot_rest();
+		foreach ( array( 'post', 'page', 'product', 'locations', 'category', 'post_tag', 'product_cat', 'product_tag' ) as $type ) {
+			check( isset( $GLOBALS['wp']['fields'][ $type ]['mkt_seo'] ), "field on $type" );
+		}
+		foreach ( array( 'attachment', 'nav_menu', 'post_format', 'wp_pattern_category' ) as $type ) {
+			check( ! isset( $GLOBALS['wp']['fields'][ $type ] ), "no field on internal $type" );
+		}
+		check( array( '1.2.0' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
+		// A product update is saved early, like posts.
+		check( true === rest_update( 9329, array( 'title' => 'Product SEO' ), 'product' ), 'product update ok' );
+		check( 'Product SEO' === ( $GLOBALS['wp']['meta_at_save']['_yoast_wpseo_title'] ?? null ), 'product SEO saved before the product save' );
+		break;
+
+	case 'term-yoast':
+		$GLOBALS['wp']['taxonomies'] = array( 'category', 'product_cat' );
+		$GLOBALS['wp']['terms'][16]  = (object) array( 'term_id' => 16, 'taxonomy' => 'product_cat' );
+		$GLOBALS['wp']['options']['wpseo_taxonomy_meta'] = array( 'product_cat' => array( 16 => array( 'wpseo_title' => 'Old', 'wpseo_noindex' => 'default' ) ), 'category' => array( 1 => array( 'wpseo_title' => 'Untouched' ) ) );
+		define( 'WPSEO_VERSION', '25.0' );
+		require $plugin;
+		boot_rest();
+		check( true === rest_update_term( 16, 'product_cat', array( 'title' => 'Carports <b>| AMB</b>', 'description' => 'Desc', 'canonical' => 'https://a.example/c/' ) ), 'term update ok' );
+		$at_save = $GLOBALS['wp']['seo_at_term_save']['option']['product_cat'][16];
+		check( 'Carports | AMB' === $at_save['wpseo_title'] && 'Desc' === $at_save['wpseo_desc'] && 'https://a.example/c/' === $at_save['wpseo_canonical'], 'saved into wpseo_taxonomy_meta before the term save, tags stripped' );
+		check( 'default' === $at_save['wpseo_noindex'], 'other Yoast term settings kept' );
+		check( 'Untouched' === $GLOBALS['wp']['options']['wpseo_taxonomy_meta']['category'][1]['wpseo_title'], 'other taxonomies untouched' );
+		rest_update_term( 16, 'product_cat', array( 'description' => '' ) );
+		check( ! isset( $GLOBALS['wp']['options']['wpseo_taxonomy_meta']['product_cat'][16]['wpseo_desc'] ), 'empty string removes' );
+		$value = call_user_func( field( 'product_cat' )['get_callback'], array( 'id' => 16, 'taxonomy' => 'product_cat' ) );
+		check( 'Carports | AMB' === $value['title'] && '' === $value['description'] && 'yoast' === $value['plugin'], 'term read back' );
+		// A new term (no id yet) is saved by update_callback after it exists.
+		$req = new WP_REST_Request( array( 'mkt_seo' => array( 'title' => 'New cat' ) ) );
+		check( is_object( apply_filters( 'rest_pre_insert_product_cat', (object) array( 'name' => 'New' ), $req ) ), 'new term passes through' );
+		call_user_func( field( 'product_cat' )['update_callback'], array( 'title' => 'New cat' ), (object) array( 'term_id' => 40, 'taxonomy' => 'product_cat' ) );
+		check( 'New cat' === $GLOBALS['wp']['options']['wpseo_taxonomy_meta']['product_cat'][40]['wpseo_title'], 'new term saved' );
+		check( is_wp_error( rest_update_term( 16, 'product_cat', array( 'title' => str_repeat( 'x', 301 ) ) ) ), 'too long rejected' );
+		break;
+
+	case 'term-rank-math':
+		$GLOBALS['wp']['taxonomies'] = array( 'product_cat' );
+		$GLOBALS['wp']['terms'][21]  = (object) array( 'term_id' => 21, 'taxonomy' => 'product_cat' );
+		define( 'RANK_MATH_VERSION', '1.0.250' );
+		require $plugin;
+		boot_rest();
+		check( true === rest_update_term( 21, 'product_cat', array( 'title' => 'Metal Garages', 'focus_keyword' => 'metal garages' ) ), 'term update ok' );
+		check( 'Metal Garages' === ( $GLOBALS['wp']['seo_at_term_save']['meta']['rank_math_title'] ?? null ), 'saved to term meta before the term save' );
+		check( 'metal garages' === $GLOBALS['wp']['term_meta'][21]['rank_math_focus_keyword'], 'focus keyword' );
+		check( empty( $GLOBALS['wp']['options'] ), 'no Yoast option written' );
+		break;
+
+	case 'term-permissions-and-conflicts':
+		$GLOBALS['wp']['taxonomies'] = array( 'product_cat', 'locations' );
+		$GLOBALS['wp']['types']      = array( 'post', 'locations' );
+		$GLOBALS['wp']['terms'][5]   = (object) array( 'term_id' => 5, 'taxonomy' => 'product_cat' );
+		define( 'WPSEO_VERSION', '25.0' );
+		require $plugin;
+		boot_rest();
+		// A post type and a taxonomy with the same name share the hook name; each callback only handles its own object.
+		$post = (object) array( 'ID' => 7, 'post_type' => 'locations' );
+		check( $post === MKT_SEO_Bridge::pre_insert_term( $post, new WP_REST_Request( array( 'id' => 7, 'mkt_seo' => array( 'title' => 'x' ) ) ) ), 'term callback ignores posts' );
+		check( empty( $GLOBALS['wp']['options'] ), 'no term write for a post' );
+		$error = new WP_Error( 'other', 'other plugin' );
+		check( $error === MKT_SEO_Bridge::pre_insert_term( $error, new WP_REST_Request( array( 'id' => 5, 'mkt_seo' => array( 'title' => 'x' ) ) ) ), 'WP_Error passes through' );
+		$GLOBALS['wp']['can_edit'] = false;
+		check( null === call_user_func( field( 'product_cat' )['get_callback'], array( 'id' => 5, 'taxonomy' => 'product_cat' ) ), 'hidden without permission' );
+		$denied = rest_update_term( 5, 'product_cat', array( 'title' => 'x' ) );
+		check( is_wp_error( $denied ) && 'rest_cannot_edit' === $denied->get_error_code(), 'write refused without permission' );
+		check( empty( $GLOBALS['wp']['options'] ), 'nothing written' );
+		break;
+
 	case 'loads-twice':
 		// An old copy in another folder, or a must-use copy, plus the real one: no "Cannot redeclare" fatal.
 		$copy = sys_get_temp_dir() . '/mkt-bridge-copy-' . getmypid() . '.php';
@@ -222,7 +350,7 @@ switch ( $scenario ) {
 		boot_rest();
 		$schema = field()['schema'];
 		check( array( 'none' ) === $schema['properties']['plugin']['enum'], 'advertises plugin none' );
-		check( array( '1.1.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
+		check( array( '1.2.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 5 ) );
 		check( 'none' === $value['plugin'] && '' === $value['title'], 'get works without an SEO plugin' );
 		check( true === rest_update( 5, array( 'title' => 'T' ) ), 'update is a harmless no-op' );
@@ -249,7 +377,7 @@ switch ( $scenario ) {
 		call_user_func( $cb, array( 'title' => 'Fresh' ), (object) array( 'ID' => 8 ) );
 		check( 'Fresh' === $GLOBALS['wp']['meta'][8]['_yoast_wpseo_title'], 'new post saved by update_callback' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 7 ) );
-		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.1.0' === $value['version'], 'read back' );
+		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.2.0' === $value['version'], 'read back' );
 		break;
 
 	case 'rank-math-with-hostile-autoloader':

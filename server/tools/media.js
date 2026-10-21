@@ -105,10 +105,12 @@ module.exports = {
     }
 
     // Check the target draft before uploading, so a wrong post ID does not leave an orphan image.
-    const route = args.post_type === 'page' ? '/pages' : '/posts';
+    let route = '/posts';
     if (args.featured_for_post_id !== undefined) {
+      const pc = await require('./posts.js').postContext(ctx, args);
+      route = pc.route;
       const target = await ctx.request(route + '/' + args.featured_for_post_id + '?context=edit');
-      if (!['draft', 'pending'].includes(target.status)) throw new Error('featured_for_post_id must be a draft or pending ' + (route === '/pages' ? 'page' : 'post') + '; nothing was uploaded.');
+      if (!['draft', 'pending'].includes(target.status)) throw new Error('featured_for_post_id must be a draft or pending ' + pc.kind + '; nothing was uploaded.');
     }
 
     const safeName = path.basename(file).replace(/[^a-zA-Z0-9._-]/g, '_');

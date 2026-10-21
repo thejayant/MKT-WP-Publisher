@@ -42,9 +42,14 @@ function abortableSleep(ms, signal) {
 }
 
 /** The ?rest_route= form of an endpoint, for sites using plain permalinks where /wp-json is not routed. */
-function plainUrl(site, endpoint) {
+function plainUrl(site, endpoint, namespace = 'wp/v2') {
   const [routePath, query] = endpoint.split(/\?(.*)/s);
-  return site.site_url + '/?rest_route=' + encodeURIComponent('/wp/v2' + routePath).replace(/%2F/g, '/') + (query ? '&' + query : '');
+  return site.site_url + '/?rest_route=' + encodeURIComponent('/' + namespace + routePath).replace(/%2F/g, '/') + (query ? '&' + query : '');
+}
+
+/** Pretty-permalink URL of an endpoint in any REST namespace (wp/v2 by default, wc/v3 for WooCommerce). */
+function prettyUrl(site, endpoint, namespace = 'wp/v2') {
+  return namespace === 'wp/v2' ? site.base + endpoint : site.site_url + '/wp-json/' + namespace + endpoint;
 }
 
 /**
@@ -92,7 +97,7 @@ function createClient(fetcher, {timeouts = {}, sleep = abortableSleep, log = nul
    * @param endpoint path under /wp/v2, with an optional query string
    * @param options  {method, body (object or Buffer), headers, meta (receives total/total_pages), upload (longer timeout)}
    */
-  async function request(site, signal, endpoint, {method = 'GET', body, headers = {}, meta, upload = false} = {}) {
+  async function request(site, signal, endpoint, {method = 'GET', body, headers = {}, meta, upload = false, namespace = 'wp/v2'} = {}) {
     checkCancelled(signal);
     const isJsonBody = body !== undefined && !Buffer.isBuffer(body);
     const timeoutMs = upload ? limits.upload : limits.request;
@@ -152,11 +157,11 @@ function createClient(fetcher, {timeouts = {}, sleep = abortableSleep, log = nul
       return attempt;
     };
 
-    let {response, data, parsed} = await sendWithRetry(plainSites.has(site.site_url) ? plainUrl(site, endpoint) : site.base + endpoint);
+    let {response, data, parsed} = await sendWithRetry(plainSites.has(site.site_url) ? plainUrl(site, endpoint, namespace) : prettyUrl(site, endpoint, namespace));
     // With plain permalinks /wp-json is not routed: WordPress answers with its HTML 404 page and processes nothing,
     // so retrying once via ?rest_route= is safe even for writes.
     if (!response.ok && !parsed && response.status === 404 && !plainSites.has(site.site_url)) {
-      const retry = await sendWithRetry(plainUrl(site, endpoint));
+      const retry = await sendWithRetry(plainUrl(site, endpoint, namespace));
       if (retry.parsed) {
         plainSites.add(site.site_url);
         ({response, data, parsed} = retry);
