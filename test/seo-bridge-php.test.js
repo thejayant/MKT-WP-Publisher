@@ -35,6 +35,11 @@ const SCENARIOS = [
   'fields-terms',
   'fields-storage-failure',
   'fields-admin-meta-keys',
+  'seopress',
+  'aioseo',
+  'aioseo-missing-table',
+  'seo-plugin-precedence',
+  'page-builder',
 ];
 
 test('SEO Bridge plugin: PHP syntax', {skip}, () => {

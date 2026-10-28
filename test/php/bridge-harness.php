@@ -400,8 +400,150 @@ function load_acf_page_fixture() {
 	);
 }
 
+// ---- All in One SEO's table, as a minimal $wpdb ---------------------------------------------------------------
+define( 'ARRAY_A', 'ARRAY_A' );
+function wp_json_encode( $value ) {
+	return json_encode( $value );
+}
+class Harness_WPDB {
+	public $prefix = 'wp_';
+	/** @var array<int,array> Rows of wp_aioseo_posts by post_id; null when the table does not exist. */
+	public $aioseo = array();
+	public $fail   = false;
+	public function esc_like( $text ) {
+		return addcslashes( $text, '_%\\' );
+	}
+	public function prepare( $query, ...$args ) {
+		foreach ( $args as $arg ) {
+			$query = preg_replace( '/%[ds]/', is_int( $arg ) ? (string) $arg : "'" . $arg . "'", $query, 1 );
+		}
+		return $query;
+	}
+	public function get_var( $query ) {
+		return null === $this->aioseo ? null : 'wp_aioseo_posts';
+	}
+	public function get_row( $query, $output ) {
+		preg_match( '/post_id = (\d+)/', $query, $m );
+		return $this->aioseo[ (int) $m[1] ] ?? null;
+	}
+	public function update( $table, $data, $where ) {
+		if ( $this->fail ) {
+			return false;
+		}
+		$this->aioseo[ $where['post_id'] ] = array_merge( $this->aioseo[ $where['post_id'] ], $data );
+		return 1;
+	}
+	public function insert( $table, $data ) {
+		if ( $this->fail ) {
+			return false;
+		}
+		$this->aioseo[ $data['post_id'] ] = $data + array( 'title' => null, 'description' => null, 'keyphrases' => null, 'canonical_url' => null );
+		return 1;
+	}
+}
+$GLOBALS['wpdb'] = new Harness_WPDB();
+
 // ---- scenarios ----------------------------------------------------------------------------------------------
 switch ( $scenario ) {
+	case 'seopress':
+		define( 'SEOPRESS_VERSION', '8.5' );
+		require $plugin;
+		boot_rest();
+		check( array( 'seopress' ) === field()['schema']['properties']['plugin']['enum'], 'advertises seopress' );
+		check( true === rest_update( 7, array( 'title' => 'SP <i>title</i>', 'description' => 'SP desc', 'focus_keyword' => 'carports', 'canonical' => 'https://a.example/sp' ) ), 'update ok' );
+		check( 'SP title' === $GLOBALS['wp']['meta'][7]['_seopress_titles_title'], 'title saved to SEOPress meta' );
+		check( 'SP desc' === $GLOBALS['wp']['meta'][7]['_seopress_titles_desc'], 'description saved' );
+		check( 'carports' === $GLOBALS['wp']['meta'][7]['_seopress_analysis_target_kw'], 'focus keyword saved' );
+		check( 'https://a.example/sp' === $GLOBALS['wp']['meta'][7]['_seopress_robots_canonical'], 'canonical saved' );
+		$value = call_user_func( field()['get_callback'], array( 'id' => 7 ) );
+		check( 'SP title' === $value['title'] && 'seopress' === $value['plugin'] && 'carports' === $value['focus_keyword'], 'read back' );
+		rest_update( 7, array( 'description' => '' ) );
+		check( ! isset( $GLOBALS['wp']['meta'][7]['_seopress_titles_desc'] ), 'empty string deletes' );
+		// Terms use term meta with the same keys.
+		check( array( 'seopress' ) === field( 'category' )['schema']['properties']['plugin']['enum'], 'terms advertise seopress' );
+		break;
+
+	case 'aioseo':
+		define( 'AIOSEO_VERSION', '4.8.0' );
+		require $plugin;
+		boot_rest();
+		check( array( 'aioseo' ) === field()['schema']['properties']['plugin']['enum'], 'advertises aioseo' );
+		// Existing row with an additional keyphrase that must be kept.
+		$GLOBALS['wpdb']->aioseo[7] = array( 'post_id' => 7, 'title' => 'Old', 'description' => 'Old desc', 'keyphrases' => '{"focus":{"keyphrase":"old","score":40,"analysis":{"x":1}},"additional":[{"keyphrase":"extra"}]}', 'canonical_url' => null );
+		check( true === rest_update( 7, array( 'title' => 'AIO <b>title</b>', 'focus_keyword' => 'carports', 'canonical' => 'https://a.example/aio' ) ), 'update ok' );
+		$row = $GLOBALS['wpdb']->aioseo[7];
+		check( 'AIO title' === $row['title'] && 'Old desc' === $row['description'], 'title saved, description untouched' );
+		check( 'https://a.example/aio' === $row['canonical_url'], 'canonical saved to canonical_url' );
+		$phrases = json_decode( $row['keyphrases'], true );
+		check( 'carports' === $phrases['focus']['keyphrase'] && 40 === $phrases['focus']['score'] && 'extra' === $phrases['additional'][0]['keyphrase'], 'focus keyphrase saved, rest of keyphrases kept' );
+		check( ! empty( $row['updated'] ), 'updated time set' );
+		check( empty( $GLOBALS['wp']['meta'][7] ), 'no post meta written' );
+		$value = call_user_func( field()['get_callback'], array( 'id' => 7 ) );
+		check( 'AIO title' === $value['title'] && 'carports' === $value['focus_keyword'] && 'aioseo' === $value['plugin'], 'read back' );
+		rest_update( 7, array( 'description' => '' ) );
+		check( null === $GLOBALS['wpdb']->aioseo[7]['description'], 'empty string stores NULL (AIOSEO default)' );
+		// A post without a row gets one.
+		$cb = field()['update_callback'];
+		check( true === call_user_func( $cb, array( 'title' => 'Fresh', 'focus_keyword' => 'new' ), (object) array( 'ID' => 8 ) ), 'new post saved' );
+		check( 'Fresh' === $GLOBALS['wpdb']->aioseo[8]['title'] && 8 === $GLOBALS['wpdb']->aioseo[8]['post_id'] && ! empty( $GLOBALS['wpdb']->aioseo[8]['created'] ), 'row created' );
+		check( 'new' === json_decode( $GLOBALS['wpdb']->aioseo[8]['keyphrases'], true )['focus']['keyphrase'], 'keyphrase on new row' );
+		// No row and no values: empty strings, never an error.
+		$empty = call_user_func( field()['get_callback'], array( 'id' => 99 ) );
+		check( '' === $empty['title'] && '' === $empty['focus_keyword'], 'missing row reads empty' );
+		// Write failure is reported and stops the save.
+		$GLOBALS['wpdb']->fail = true;
+		check( is_wp_error( rest_update( 7, array( 'title' => 'X' ) ) ), 'database failure reported' );
+		// Terms: All in One SEO term SEO is not written, so terms report no plugin.
+		check( array( 'none' ) === field( 'category' )['schema']['properties']['plugin']['enum'], 'terms report none for aioseo' );
+		break;
+
+	case 'aioseo-missing-table':
+		define( 'AIOSEO_VERSION', '4.8.0' );
+		$GLOBALS['wpdb']->aioseo = null;
+		require $plugin;
+		boot_rest();
+		$result = rest_update( 7, array( 'title' => 'X' ) );
+		check( is_wp_error( $result ), 'missing table refused' );
+		check( '' === call_user_func( field()['get_callback'], array( 'id' => 7 ) )['title'], 'missing table reads empty' );
+		break;
+
+	case 'seo-plugin-precedence':
+		// Sites that already use Yoast or Rank Math keep using them when AIOSEO or SEOPress is also active.
+		define( 'RANK_MATH_VERSION', '1.0.250' );
+		define( 'AIOSEO_VERSION', '4.8.0' );
+		define( 'SEOPRESS_VERSION', '8.5' );
+		require $plugin;
+		boot_rest();
+		check( array( 'rank-math' ) === field()['schema']['properties']['plugin']['enum'], 'rank math wins over aioseo and seopress' );
+		rest_update( 7, array( 'title' => 'RM' ) );
+		check( 'RM' === $GLOBALS['wp']['meta'][7]['rank_math_title'] && empty( $GLOBALS['wpdb']->aioseo ), 'written to rank math only' );
+		check( array( 'Rank Math', 'All in One SEO', 'SEOPress' ) === MKT_SEO_Bridge::active_seo_plugins(), 'all listed for the status page' );
+		break;
+
+	case 'page-builder':
+		require $plugin;
+		boot_rest();
+		$builder = $GLOBALS['wp']['fields']['page']['mkt_builder'];
+		check( true === $builder['schema']['readonly'] && ! isset( $builder['update_callback'] ), 'read-only field' );
+		$get = $builder['get_callback'];
+		$GLOBALS['wp']['meta'][10]['_elementor_edit_mode'] = 'builder';
+		$GLOBALS['wp']['meta'][11]['_wpb_vc_js_status']    = 'true';
+		$GLOBALS['wp']['meta'][12]['_fl_builder_enabled']  = '1';
+		$GLOBALS['wp']['meta'][13]['_fl_builder_enabled']  = '0';
+		$GLOBALS['wp']['meta'][14]['_elementor_edit_mode'] = '';
+		check( array( 'id' => 'elementor', 'name' => 'Elementor', 'storage' => 'meta' ) === call_user_func( $get, array( 'id' => 10 ) ), 'elementor' );
+		check( 'wpbakery' === call_user_func( $get, array( 'id' => 11 ) )['id'] && 'content' === call_user_func( $get, array( 'id' => 11 ) )['storage'], 'wpbakery stores layout in content' );
+		check( 'beaver-builder' === call_user_func( $get, array( 'id' => 12 ) )['id'], 'beaver builder' );
+		check( null === call_user_func( $get, array( 'id' => 13 ) ), 'beaver builder turned off' );
+		check( null === call_user_func( $get, array( 'id' => 14 ) ), 'elementor meta present but not in builder mode' );
+		check( null === call_user_func( $get, array( 'id' => 15 ) ), 'plain post' );
+		$GLOBALS['wp']['can_edit'] = false;
+		check( null === call_user_func( $get, array( 'id' => 10 ) ), 'hidden from users who cannot edit' );
+		$GLOBALS['wp']['can_edit']    = true;
+		$GLOBALS['wp']['meta_throws'] = true;
+		check( null === call_user_func( $get, array( 'id' => 10 ) ), 'errors never break the response' );
+		break;
+
 	case 'all-post-types-and-taxonomies':
 		$GLOBALS['wp']['types']      = array( 'post', 'page', 'product', 'locations' );
 		$GLOBALS['wp']['taxonomies'] = array( 'category', 'post_tag', 'product_cat', 'product_tag', 'nav_menu', 'post_format', 'wp_pattern_category' );
@@ -416,7 +558,7 @@ switch ( $scenario ) {
 		foreach ( array( 'attachment', 'nav_menu', 'post_format', 'wp_pattern_category' ) as $type ) {
 			check( ! isset( $GLOBALS['wp']['fields'][ $type ] ), "no field on internal $type" );
 		}
-		check( array( '1.3.0' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
+		check( array( '1.4.0' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
 		check( array( 'show_ui' => true, 'show_in_rest' => true ) === $GLOBALS['wp']['taxonomy_query'], 'taxonomies chosen by show_ui + show_in_rest, not public (tags can be non-public)' );
 		// A product update is saved early, like posts.
 		check( true === rest_update( 9329, array( 'title' => 'Product SEO' ), 'product' ), 'product update ok' );
@@ -497,7 +639,7 @@ switch ( $scenario ) {
 		boot_rest();
 		$schema = field()['schema'];
 		check( array( 'none' ) === $schema['properties']['plugin']['enum'], 'advertises plugin none' );
-		check( array( '1.3.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
+		check( array( '1.4.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 5 ) );
 		check( 'none' === $value['plugin'] && '' === $value['title'], 'get works without an SEO plugin' );
 		check( true === rest_update( 5, array( 'title' => 'T' ) ), 'update is a harmless no-op' );
@@ -524,7 +666,7 @@ switch ( $scenario ) {
 		call_user_func( $cb, array( 'title' => 'Fresh' ), (object) array( 'ID' => 8 ) );
 		check( 'Fresh' === $GLOBALS['wp']['meta'][8]['_yoast_wpseo_title'], 'new post saved by update_callback' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 7 ) );
-		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.3.0' === $value['version'], 'read back' );
+		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.4.0' === $value['version'], 'read back' );
 		break;
 
 	case 'rank-math-with-hostile-autoloader':
@@ -637,11 +779,11 @@ switch ( $scenario ) {
 		require $plugin;
 		boot_rest();
 		$schema = $GLOBALS['wp']['fields']['page']['mkt_fields']['schema'];
-		check( array( 'acf' ) === $schema['properties']['source']['enum'] && array( '1.3.0' ) === $schema['properties']['version']['enum'], 'schema advertises ACF and the bridge version' );
+		check( array( 'acf' ) === $schema['properties']['source']['enum'] && array( '1.4.0' ) === $schema['properties']['version']['enum'], 'schema advertises ACF and the bridge version' );
 		check( null === read_fields( 2549, 'page', false ), 'not computed for requests that do not ask for it (editor, other clients)' );
 		$f      = read_fields( 2549, 'page' );
 		$screen = end( $GLOBALS['acf']['screens'] );
-		check( 'acf' === $f['source'] && '6.3.5' === $f['acf_version'] && '1.3.0' === $f['version'], 'source and versions' );
+		check( 'acf' === $f['source'] && '6.3.5' === $f['acf_version'] && '1.4.0' === $f['version'], 'source and versions' );
 		check( 2549 === $screen['post_id'] && 'page' === $screen['post_type'], "ACF's location rules get the post and its type" );
 		$fields = $f['fields'];
 		check( 'Steel Buildings Virginia' === $fields['hero_title']['value'] && 'text' === $fields['hero_title']['type'] && true === $fields['hero_title']['writable'], 'simple field' );

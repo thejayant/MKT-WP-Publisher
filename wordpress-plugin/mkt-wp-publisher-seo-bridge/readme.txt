@@ -1,13 +1,13 @@
 === MKT Publisher SEO Bridge for Yoast & Rank Math ===
 Contributors: jayant
-Tags: seo, yoast, rank math, rest api, claude
+Tags: seo, yoast, rank math, aioseo, seopress
 Requires at least: 5.6
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Lets the MKT WP Publisher extension for Claude read and update SEO titles, meta descriptions, focus keywords and canonical URLs in Yoast SEO or Rank Math.
+Lets WP Publisher (for Claude and for ChatGPT) read and update SEO titles, meta descriptions, focus keywords and canonical URLs in Yoast SEO, Rank Math, All in One SEO or SEOPress.
 
 == Description ==
 
@@ -42,7 +42,7 @@ Compatibility with other plugins and custom sites:
 
 1. In WordPress admin go to **Plugins → Add New → Upload Plugin**.
 2. Upload `mkt-wp-publisher-seo-bridge.zip` and click **Activate**.
-3. Make sure Yoast SEO or Rank Math is active. If both are, Yoast SEO is used.
+3. Make sure Yoast SEO, Rank Math, All in One SEO or SEOPress is active. If more than one is, the first in that order is used.
 4. Open **Tools → MKT SEO Bridge** to check the status.
 
 To update, upload the new zip the same way and choose **Replace current with uploaded**.
@@ -58,6 +58,11 @@ For existing posts the bridge saves the SEO values just before WordPress saves t
 The extension can no longer change SEO fields; anything already saved stays in Yoast SEO or Rank Math as normal.
 
 == Changelog ==
+
+= 1.4.0 =
+* New: All in One SEO (posts, pages and other post types; its category and tag SEO is a Pro feature and is not written) and SEOPress (posts and terms). Yoast SEO, then Rank Math, then All in One SEO, then SEOPress is used when more than one is active, so existing sites behave exactly as before.
+* New: read-only `mkt_builder` REST field naming the page builder (Elementor, Bricks, Beaver Builder, Breakdance, Oxygen, Divi, WPBakery, Avada) that owns a post's layout, so WP Publisher does not overwrite builder pages.
+* Older WP Publisher versions keep working with this version unchanged.
 
 = 1.3.0 =
 * New: custom fields. The `mkt_fields` REST field reads and writes Advanced Custom Fields (free or Pro) on posts, pages, products, categories and tags, including repeaters, groups and flexible content.

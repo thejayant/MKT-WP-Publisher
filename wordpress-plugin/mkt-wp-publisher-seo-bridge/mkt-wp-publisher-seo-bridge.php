@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:       MKT Publisher SEO Bridge for Yoast & Rank Math
- * Description:       Lets the MKT WP Publisher extension for Claude read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO or Rank Math, and their Advanced Custom Fields, through the WordPress REST API.
- * Version:           1.3.0
+ * Description:       Lets WP Publisher (for Claude and for ChatGPT) read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO, Rank Math, All in One SEO or SEOPress, and their Advanced Custom Fields, through the WordPress REST API.
+ * Version:           1.4.0
  * Author:            Jayant
  * Requires at least: 5.6
  * Requires PHP:      7.4
@@ -13,7 +13,7 @@
  *
  * Adds one REST field, "mkt_seo", to every public post type (posts, pages, products, …) and taxonomy
  * (categories, tags, product categories, …), edit context only:
- *   { "plugin": "yoast" | "rank-math" | "none", "version": "1.2.2",
+ *   { "plugin": "yoast" | "rank-math" | "aioseo" | "seopress" | "none", "version": "1.4.0",
  *     "title": "", "description": "", "focus_keyword": "", "canonical": "" }
  * Writing it requires permission to edit that post. An empty string removes a value.
  *
@@ -24,7 +24,13 @@
  * Writes send whole top-level values: { "fields": { "name": value }, "meta": { "key": "text" } }. Every value is
  * checked against the field definition before anything is saved; unknown or read-only fields are refused.
  *
- * Neither SEO plugin registers its post meta for the REST API, which is why this bridge exists.
+ * From 1.4.0 All in One SEO (posts and pages; it keeps them in its own aioseo_posts table) and SEOPress (post meta,
+ * and term meta for categories and tags) are supported too. Yoast SEO, then Rank Math, then All in One SEO, then
+ * SEOPress is used when more than one is active, so sites with Yoast or Rank Math behave exactly as before.
+ * 1.4.0 also adds a read-only "mkt_builder" field: the page builder (Elementor, Bricks, Divi, WPBakery…) that owns a
+ * post's layout, read from the builder's own post meta, so the extension does not overwrite builder pages.
+ *
+ * None of these SEO plugins registers its post meta for the REST API, which is why this bridge exists.
  * For existing posts the values are saved just BEFORE WordPress saves the post, so Yoast's cached
  * "indexable" (which drives the page's <title> and meta tags) is rebuilt with the new values right away.
  * For new posts they are saved right after creation; publishing then refreshes Yoast's cache.
@@ -49,8 +55,9 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 	final class MKT_SEO_Bridge {
 
-		const VERSION     = '1.3.0';
+		const VERSION     = '1.4.0';
 		const FIELD       = 'mkt_seo';
+		const BUILDER     = 'mkt_builder';
 		const TEXT_DOMAIN = 'mkt-wp-publisher-seo-bridge';
 
 		/** @var string Main plugin file, for URLs and the action link. */
@@ -80,7 +87,11 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			);
 		}
 
-		/** Meta keys for the active SEO plugin, or null when neither is active. Yoast wins if both are. */
+		/**
+		 * Meta keys for the active SEO plugin, or null when none is active. Order of preference: Yoast SEO, Rank Math,
+		 * All in One SEO, SEOPress. All in One SEO keeps its values in its own table: its "keys" are column names and
+		 * "storage" is "aioseo".
+		 */
 		public static function keys() {
 			if ( defined( 'WPSEO_VERSION' ) ) {
 				return array(
@@ -102,7 +113,155 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					'canonical'     => 'rank_math_canonical_url',
 				);
 			}
+			if ( self::aioseo_active() ) {
+				return array(
+					'plugin'        => 'aioseo',
+					'name'          => 'All in One SEO',
+					'storage'       => 'aioseo',
+					'title'         => 'title',
+					'description'   => 'description',
+					'focus_keyword' => 'keyphrases',
+					'canonical'     => 'canonical_url',
+				);
+			}
+			if ( defined( 'SEOPRESS_VERSION' ) ) {
+				return array(
+					'plugin'        => 'seopress',
+					'name'          => 'SEOPress',
+					'title'         => '_seopress_titles_title',
+					'description'   => '_seopress_titles_desc',
+					'focus_keyword' => '_seopress_analysis_target_kw',
+					'canonical'     => '_seopress_robots_canonical',
+				);
+			}
 			return null;
+		}
+
+		/** All in One SEO (4.x), checked without running its code. */
+		private static function aioseo_active() {
+			return defined( 'AIOSEO_VERSION' ) || function_exists( 'aioseo' );
+		}
+
+		/** Names of every active SEO plugin this bridge knows, in order of preference. */
+		public static function active_seo_plugins() {
+			$names = array();
+			if ( defined( 'WPSEO_VERSION' ) ) {
+				$names[] = 'Yoast SEO';
+			}
+			if ( self::rank_math_active() ) {
+				$names[] = 'Rank Math';
+			}
+			if ( self::aioseo_active() ) {
+				$names[] = 'All in One SEO';
+			}
+			if ( defined( 'SEOPRESS_VERSION' ) ) {
+				$names[] = 'SEOPress';
+			}
+			return $names;
+		}
+
+		/** One SEO value of a post, from post meta or All in One SEO's table. */
+		private static function post_value( $post_id, array $keys, $field ) {
+			if ( isset( $keys['storage'] ) && 'aioseo' === $keys['storage'] ) {
+				return self::aioseo_value( $post_id, $field );
+			}
+			return (string) get_post_meta( $post_id, $keys[ $field ], true );
+		}
+
+		/* ---------- All in One SEO: values live in {prefix}aioseo_posts ---------- */
+
+		/** @var string|null|false The aioseo_posts table name, false when it does not exist, null before the first check. */
+		private static $aioseo_table = null;
+
+		private static function aioseo_table() {
+			global $wpdb;
+			if ( null === self::$aioseo_table ) {
+				$table              = $wpdb->prefix . 'aioseo_posts';
+				self::$aioseo_table = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ) === $table ? $table : false;
+			}
+			return self::$aioseo_table;
+		}
+
+		private static function aioseo_row( $post_id ) {
+			global $wpdb;
+			$table = self::aioseo_table();
+			if ( ! $table ) {
+				return null;
+			}
+			// The table name comes from $wpdb->prefix, not from the request.
+			$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$table}` WHERE post_id = %d LIMIT 1", $post_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			return is_array( $row ) ? $row : null;
+		}
+
+		/** The focus keyphrase is stored as JSON: {"focus":{"keyphrase":"…","score":0,"analysis":{}},"additional":[]}. */
+		private static function aioseo_keyphrases( $row ) {
+			$data = $row && isset( $row['keyphrases'] ) ? json_decode( (string) $row['keyphrases'] ) : null;
+			return is_object( $data ) ? $data : (object) array( 'focus' => (object) array(), 'additional' => array() );
+		}
+
+		private static function aioseo_value( $post_id, $field ) {
+			$row = self::aioseo_row( $post_id );
+			if ( ! $row ) {
+				return '';
+			}
+			if ( 'focus_keyword' === $field ) {
+				$data = self::aioseo_keyphrases( $row );
+				return isset( $data->focus->keyphrase ) && is_scalar( $data->focus->keyphrase ) ? (string) $data->focus->keyphrase : '';
+			}
+			$column = 'canonical' === $field ? 'canonical_url' : $field;
+			return isset( $row[ $column ] ) && is_scalar( $row[ $column ] ) ? (string) $row[ $column ] : '';
+		}
+
+		/**
+		 * Save cleaned SEO values to All in One SEO's row for the post, creating the row if it has none yet. An empty
+		 * value is stored as NULL, which All in One SEO reads as "use the default".
+		 *
+		 * @return true|WP_Error
+		 */
+		private static function aioseo_save( $post_id, array $clean ) {
+			global $wpdb;
+			$table = self::aioseo_table();
+			if ( ! $table ) {
+				return new WP_Error( 'mkt_seo_save_failed', __( 'All in One SEO is active but its data table was not found. Open All in One SEO once in wp-admin so it can finish installing, then retry.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+			$row  = self::aioseo_row( $post_id );
+			$data = array();
+			foreach ( $clean as $field => $text ) {
+				if ( 'focus_keyword' === $field ) {
+					$phrases = self::aioseo_keyphrases( $row );
+					if ( ! isset( $phrases->focus ) || ! is_object( $phrases->focus ) ) {
+						$phrases->focus = (object) array();
+					}
+					$phrases->focus->keyphrase = $text;
+					if ( ! isset( $phrases->focus->score ) ) {
+						$phrases->focus->score = 0;
+					}
+					if ( ! isset( $phrases->focus->analysis ) ) {
+						$phrases->focus->analysis = (object) array();
+					}
+					if ( ! isset( $phrases->additional ) ) {
+						$phrases->additional = array();
+					}
+					$data['keyphrases'] = wp_json_encode( $phrases );
+				} else {
+					$data[ 'canonical' === $field ? 'canonical_url' : $field ] = '' === $text ? null : $text;
+				}
+			}
+			if ( ! $data ) {
+				return true;
+			}
+			$data['updated'] = gmdate( 'Y-m-d H:i:s' );
+			if ( $row ) {
+				$done = $wpdb->update( $table, $data, array( 'post_id' => $post_id ) );
+			} else {
+				$data['post_id'] = $post_id;
+				$data['created'] = $data['updated'];
+				$done            = $wpdb->insert( $table, $data );
+			}
+			if ( false === $done ) {
+				return new WP_Error( 'mkt_seo_save_failed', __( 'The All in One SEO fields could not be saved.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+			return true;
 		}
 
 		/** Rank Math, checked without triggering any autoloader (a broken third-party autoloader could throw). */
@@ -156,6 +315,14 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 						'schema'          => self::fields_schema( 'post' ),
 					)
 				);
+				register_rest_field(
+					$post_type,
+					self::BUILDER,
+					array(
+						'get_callback' => array( __CLASS__, 'get_builder' ),
+						'schema'       => self::builder_schema(),
+					)
+				);
 			}
 			foreach ( self::taxonomies() as $taxonomy ) {
 				if ( ! taxonomy_exists( $taxonomy ) ) {
@@ -170,7 +337,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					array(
 						'get_callback'    => array( __CLASS__, 'get_term_field' ),
 						'update_callback' => array( __CLASS__, 'update_term_field' ),
-						'schema'          => self::schema(),
+						'schema'          => self::schema( 'term' ),
 					)
 				);
 				register_rest_field(
@@ -196,10 +363,11 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 		/**
 		 * Field schema. The enums tell the extension, via one OPTIONS request, which SEO plugin is active and which
 		 * bridge version runs. Validation (arg_options) checks only the editable fields and ignores the read-only
-		 * ones and null, so clients that send back what they read are never rejected.
+		 * ones and null, so clients that send back what they read are never rejected. For terms, "plugin" is the
+		 * plugin whose term SEO the bridge can write ("none" for All in One SEO, which keeps term SEO in its Pro version).
 		 */
-		public static function schema() {
-			$keys       = self::keys();
+		public static function schema( $kind = 'post' ) {
+			$keys       = 'term' === $kind ? self::term_keys() : self::keys();
 			$properties = array(
 				'plugin'  => array(
 					'type'     => 'string',
@@ -275,7 +443,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					'version' => self::VERSION,
 				);
 				foreach ( array_keys( self::limits() ) as $field ) {
-					$value[ $field ] = $keys ? (string) get_post_meta( $post_id, $keys[ $field ], true ) : '';
+					$value[ $field ] = $keys ? self::post_value( $post_id, $keys, $field ) : '';
 				}
 				return $value;
 			} catch ( \Throwable $e ) {
@@ -336,6 +504,16 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 				return new WP_Error( 'rest_cannot_edit', __( 'Sorry, you are not allowed to edit the SEO fields of this post.', self::TEXT_DOMAIN ), array( 'status' => rest_authorization_required_code() ) );
 			}
 			try {
+				if ( isset( $keys['storage'] ) && 'aioseo' === $keys['storage'] ) {
+					$clean = array();
+					foreach ( self::limits() as $field => $max ) {
+						if ( array_key_exists( $field, $value ) ) {
+							$text            = 'canonical' === $field ? esc_url_raw( trim( $value[ $field ] ), array( 'http', 'https' ) ) : sanitize_text_field( $value[ $field ] );
+							$clean[ $field ] = function_exists( 'mb_substr' ) ? mb_substr( $text, 0, $max ) : substr( $text, 0, $max );
+						}
+					}
+					return self::aioseo_save( $post_id, $clean );
+				}
 				foreach ( self::limits() as $field => $max ) {
 					if ( ! array_key_exists( $field, $value ) ) {
 						continue;
@@ -354,6 +532,70 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			return true;
 		}
 
+		/* ---------- Page builder of a post (read-only) ---------- */
+
+		/**
+		 * Builders and the post meta each one sets on posts it owns: [id, name, where the layout is stored, meta key,
+		 * expected value or null for "any non-empty value"]. "meta": the layout lives in the builder's own data and
+		 * post_content is only a copy; "content": the layout is shortcodes or blocks inside post_content.
+		 */
+		private static function builders() {
+			return array(
+				array( 'elementor', 'Elementor', 'meta', '_elementor_edit_mode', 'builder' ),
+				array( 'bricks', 'Bricks', 'meta', '_bricks_editor_mode', 'bricks' ),
+				array( 'beaver-builder', 'Beaver Builder', 'meta', '_fl_builder_enabled', null ),
+				array( 'breakdance', 'Breakdance', 'meta', '_breakdance_data', null ),
+				array( 'oxygen', 'Oxygen', 'meta', 'ct_builder_shortcodes', null ),
+				array( 'oxygen', 'Oxygen', 'meta', '_oxygen_data', null ),
+				array( 'divi', 'Divi', 'content', '_et_pb_use_builder', 'on' ),
+				array( 'wpbakery', 'WPBakery Page Builder', 'content', '_wpb_vc_js_status', 'true' ),
+				array( 'avada', 'Avada Fusion Builder', 'content', 'fusion_builder_status', 'active' ),
+			);
+		}
+
+		public static function builder_schema() {
+			return array(
+				'description' => 'Page builder that owns this item\'s layout, or null (MKT Publisher SEO Bridge ' . self::VERSION . ').',
+				'type'        => array( 'object', 'null' ),
+				'context'     => array( 'edit' ),
+				'readonly'    => true,
+				'properties'  => array(
+					'id'      => array( 'type' => 'string' ),
+					'name'    => array( 'type' => 'string' ),
+					'storage' => array(
+						'type' => 'string',
+						'enum' => array( 'meta', 'content' ),
+					),
+				),
+			);
+		}
+
+		/** REST read: the builder that owns the post's layout, or null. Only for users who can edit it. Never throws. */
+		public static function get_builder( $object ) {
+			try {
+				$post_id = isset( $object['id'] ) ? (int) $object['id'] : 0;
+				if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+					return null;
+				}
+				foreach ( self::builders() as $builder ) {
+					$value = get_post_meta( $post_id, $builder[3], true );
+					$found = null === $builder[4]
+						? ! empty( $value ) && '0' !== $value && 'false' !== $value
+						: is_scalar( $value ) && (string) $value === $builder[4];
+					if ( $found ) {
+						return array(
+							'id'      => $builder[0],
+							'name'    => $builder[1],
+							'storage' => $builder[2],
+						);
+					}
+				}
+				return null;
+			} catch ( \Throwable $e ) {
+				return null;
+			}
+		}
+
 		/* ---------- Categories, tags and other terms ---------- */
 
 		/** @var array<int,bool> Term IDs whose SEO values were saved before the term itself (see pre_insert_term). */
@@ -361,11 +603,12 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 		/**
 		 * Where term SEO lives. Yoast keeps it in the "wpseo_taxonomy_meta" option ([taxonomy][term_id][wpseo_*]);
-		 * Rank Math keeps it in term meta under the same keys it uses for posts.
+		 * Rank Math and SEOPress keep it in term meta under the same keys they use for posts. All in One SEO keeps
+		 * term SEO only in its Pro version's own table, which the bridge does not write, so terms report no plugin.
 		 */
 		public static function term_keys() {
 			$keys = self::keys();
-			if ( ! $keys ) {
+			if ( ! $keys || 'aioseo' === $keys['plugin'] ) {
 				return null;
 			}
 			if ( 'yoast' === $keys['plugin'] ) {
@@ -1135,13 +1378,16 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			}
 			$keys     = self::keys();
 			$app_pass = function_exists( 'wp_is_application_passwords_available' ) ? wp_is_application_passwords_available() : true;
+			$active   = self::active_seo_plugins();
 			$plugin   = $keys
-				? $keys['name'] . ( self::both_active() ? ' ' . __( '(Yoast SEO and Rank Math are both active; Yoast SEO is used)', self::TEXT_DOMAIN ) : '' )
-				: __( 'None found. Activate Yoast SEO or Rank Math.', self::TEXT_DOMAIN );
+				/* translators: 1: active SEO plugins, 2: the one that is used */
+				? $keys['name'] . ( count( $active ) > 1 ? ' ' . sprintf( __( '(%1$s are active; %2$s is used)', self::TEXT_DOMAIN ), implode( ', ', $active ), $keys['name'] ) : '' )
+					. ( 'aioseo' === $keys['plugin'] ? ' ' . __( '(posts and pages; category and tag SEO is not supported for All in One SEO)', self::TEXT_DOMAIN ) : '' )
+				: __( 'None found. Activate Yoast SEO, Rank Math, All in One SEO or SEOPress.', self::TEXT_DOMAIN );
 			$rows     = array(
 				array( __( 'Bridge version', self::TEXT_DOMAIN ), self::VERSION, true ),
 				array( __( 'SEO plugin', self::TEXT_DOMAIN ), $plugin, (bool) $keys ),
-				array( __( 'REST fields', self::TEXT_DOMAIN ), self::FIELD . ', ' . self::FIELDS . ' ' . __( 'on posts, pages, products, other public post types and their categories and tags', self::TEXT_DOMAIN ), true ),
+				array( __( 'REST fields', self::TEXT_DOMAIN ), self::FIELD . ', ' . self::FIELDS . ', ' . self::BUILDER . ' ' . __( 'on posts, pages, products, other public post types and their categories and tags', self::TEXT_DOMAIN ), true ),
 				array(
 					__( 'Custom fields', self::TEXT_DOMAIN ),
 					self::acf_active()
@@ -1162,7 +1408,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					<img src="<?php echo esc_url( $icon ); ?>" width="48" height="48" alt="" style="border-radius:10px;" />
 					<?php esc_html_e( 'MKT Publisher SEO Bridge', self::TEXT_DOMAIN ); ?>
 				</h1>
-				<p><?php esc_html_e( 'Lets the MKT WP Publisher extension for Claude read and update SEO titles, meta descriptions, focus keywords and canonical URLs. There is nothing to configure here.', self::TEXT_DOMAIN ); ?></p>
+				<p><?php esc_html_e( 'Lets WP Publisher (for Claude and for ChatGPT) read and update SEO titles, meta descriptions, focus keywords and canonical URLs, and tells it which page builder owns a page so builder layouts are not overwritten. There is nothing to configure here.', self::TEXT_DOMAIN ); ?></p>
 				<table class="widefat striped" style="max-width:820px;">
 					<tbody>
 					<?php foreach ( $rows as $row ) : ?>
@@ -1183,7 +1429,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					<?php foreach ( self::limits() as $field => $max ) : ?>
 						<tr>
 							<td><code><?php echo esc_html( $field ); ?></code></td>
-							<td><?php echo $keys ? '<code>' . esc_html( $keys[ $field ] ) . '</code>' : '&mdash;'; ?></td>
+							<td><?php echo $keys ? '<code>' . esc_html( ( isset( $keys['storage'] ) && 'aioseo' === $keys['storage'] ? 'aioseo_posts.' : '' ) . $keys[ $field ] ) . '</code>' : '&mdash;'; ?></td>
 							<td><?php echo esc_html( number_format_i18n( $max ) ); ?></td>
 						</tr>
 					<?php endforeach; ?>
