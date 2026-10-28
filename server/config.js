@@ -6,7 +6,7 @@ const {MAX_SITES, SLUG} = require('./constants.js');
 // A host may pass an unset optional setting through as its literal ${user_config.*} placeholder; treat that as empty.
 const PLACEHOLDER = /^\$\{user_config\.[^}]*\}$/;
 const SLOT_KEYS = ['LABEL', 'URL', 'USERNAME', 'APP_PASSWORD', 'IMAGE_DIR'];
-const PROFILE_KEYS = ['id', 'label', 'site_url', 'username', 'application_password', 'image_folder'];
+const PROFILE_KEYS = ['id', 'label', 'site_url', 'username', 'application_password', 'image_folder', 'read_only'];
 const tooMany = () => new Error('A maximum of 5 WordPress websites is supported.');
 
 // Local development hosts (LocalWP, DevKinsta, Docker) may use plain http://; the traffic never leaves the machine or LAN.
@@ -19,6 +19,12 @@ function clearPlaceholders(env) {
   return Object.fromEntries(Object.entries(env).map(([key, value]) => [key, typeof value === 'string' && PLACEHOLDER.test(value.trim()) ? '' : value]));
 }
 
+/** A true/false setting: the host passes booleans or their text. Unset placeholders were already cleared to ''. */
+function readFlag(value, what) {
+  if (![undefined, '', true, false, 'true', 'false'].includes(value)) throw new Error(what + ' must be true or false.');
+  return value === true || value === 'true';
+}
+
 /** Website 1–5 groups. Returns enabled profiles and whether any group has details filled in. */
 function readSlots(env) {
   const enabledBeyondMax = Object.entries(env).some(([key, value]) => /^WP_SITE_\d+_ENABLED$/.test(key) && Number(key.split('_')[2]) > MAX_SITES && (value === true || value === 'true'));
@@ -28,9 +34,11 @@ function readSlots(env) {
   for (let n = 1; n <= MAX_SITES; n++) {
     const prefix = 'WP_SITE_' + n + '_';
     const flag = env[prefix + 'ENABLED'];
-    if (![undefined, '', true, false, 'true', 'false'].includes(flag)) throw new Error('Website ' + n + ' enable setting must be true or false.');
+    const enabled = readFlag(flag, 'Website ' + n + ' enable setting');
+    // Checked even for disabled websites, so a typo is reported before the website is turned on.
+    const readOnly = readFlag(env[prefix + 'READ_ONLY'], 'Website ' + n + ' read-only setting');
     if (SLOT_KEYS.some(k => typeof env[prefix + k] === 'string' && env[prefix + k].trim())) hasDetails = true;
-    if (flag !== true && flag !== 'true') continue;
+    if (!enabled) continue;
     if (typeof env[prefix + 'IMAGE_DIR'] !== 'string' || !env[prefix + 'IMAGE_DIR'].trim()) throw new Error('Select the blog image folder for Website ' + n + '.');
     slots.push({
       id: 'website-' + n,
@@ -39,6 +47,7 @@ function readSlots(env) {
       username: env[prefix + 'USERNAME'],
       application_password: env[prefix + 'APP_PASSWORD'],
       image_folder: env[prefix + 'IMAGE_DIR'],
+      ...(readOnly ? {read_only: true} : {}),
     });
   }
   return {slots, hasDetails};
@@ -67,7 +76,7 @@ function readProfiles(env) {
 function toSite(item, index, seen, env) {
   const which = 'Site ' + (typeof item?.id === 'string' && SLUG.test(item.id) ? item.id : 'number ' + (index + 1));
   if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(k => !PROFILE_KEYS.includes(k))) {
-    throw new Error(which + ': each site must contain id, site_url, username, application_password, and optionally label and image_folder.');
+    throw new Error(which + ': each site must contain id, site_url, username, application_password, and optionally label, image_folder and read_only.');
   }
   if (typeof item.id !== 'string' || !SLUG.test(item.id) || seen.has(item.id)) {
     throw new Error(which + ': site IDs must be unique lowercase names using digits and single hyphens.');
@@ -78,6 +87,7 @@ function toSite(item, index, seen, env) {
   }
   if (item.label !== undefined && (typeof item.label !== 'string' || !item.label.trim())) throw new Error(which + ': label must be nonempty text.');
   if (item.image_folder !== undefined && (typeof item.image_folder !== 'string' || !item.image_folder.trim())) throw new Error(which + ': image_folder must be a nonempty folder path.');
+  if (item.read_only !== undefined && typeof item.read_only !== 'boolean') throw new Error(which + ': read_only must be true or false.');
   let url;
   try {
     url = new URL(item.site_url);
@@ -94,6 +104,7 @@ function toSite(item, index, seen, env) {
     label: item.label || item.id,
     site_url,
     image_dir: item.image_folder || env.WP_IMAGE_DIR,
+    read_only: item.read_only === true,
     base: site_url + '/wp-json/wp/v2',
     auth: 'Basic ' + Buffer.from(item.username + ':' + password).toString('base64'),
   };

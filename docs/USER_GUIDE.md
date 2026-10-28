@@ -1,4 +1,4 @@
-# MKT WP Publisher 1.7.0 — User Guide
+# MKT WP Publisher 1.9.0 — User Guide
 
 Developed by Jayant.
 
@@ -6,7 +6,7 @@ Configure up to five WordPress websites using ordinary extension fields. Each we
 
 ## Install and configure
 
-Install mkt-wp-publisher-1.7.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
+Install mkt-wp-publisher-1.9.0.mcpb through Claude Desktop's extension installer. Its internal extension ID is mkt-wp-publisher, separate from Cibirix WP Publisher (local-wordpress-publisher), so both can be installed side by side with their own settings. Host-specific installation and settings appearance have not been tested here.
 
 Open the extension settings and fill the labeled Website 1 group:
 
@@ -18,12 +18,13 @@ Open the extension settings and fill the labeled Website 1 group:
 | Website 1: WordPress username | The WordPress account for this website |
 | Website 1: Application Password | An Application Password generated on this website |
 | Website 1: Blog image folder | Pick the local folder containing this website's blog images |
+| Website 1: Read-only | Optional. Turn on for a website you only audit: only reading tools work on it (see [Read-only websites](#read-only-websites)) |
 
 To add another website, fill and enable Website 2. Repeat for Website 3, 4, and 5 as needed. Leave unused groups disabled. To remove a site from tool discovery, disable its group; to remove saved credentials as well, clear its fields.
 
 These are labeled field groups in the native settings, not custom collapsible panels. All five groups may be visible. The documented MCPB settings format supports fields, checkboxes, and folder pickers; it does not provide a dynamic Add Website button or conditional section rendering. The host controls their presentation. [MCPB settings specification](https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md).
 
-Reload/restart the extension after saving settings. Verify version 1.7.0 and 23 tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
+Reload/restart the extension after saving settings. Verify version 1.9.0 and 38 tools, including list_sites, list_images, list_posts and schedule_post. Enter real passwords only in sensitive extension settings, not in chat or shared files.
 
 ## Separate blog image folders
 
@@ -181,6 +182,89 @@ WordPress keeps no revisions of custom fields, so every result includes the prev
 
 Custom fields that are not made with ACF can be opened too. In WordPress go to **Tools → MKT SEO Bridge**, list the meta keys under *Editable meta keys*, and save. Only text values can be changed, and WordPress's own internal keys (`_wp_…`, `_edit_…`) are never editable.
 
+## Read-only websites
+
+For a website you only audit, open the extension settings and turn on **Website N | Read-only**, then restart the extension. On that website only the reading tools work: listing, reading, `test_connection`, `list_blocks`, `inspect_fields`, `get_elementor_layout`, `check_blocks`, and so on. Every tool that could change something (drafts, uploads, publishing, fields, Elementor, queued editor changes) is refused before anything is sent to WordPress. `list_sites` shows `read_only: true` for it. Other websites are not affected.
+
+With the advanced JSON setup, add `"read_only": true` to that site's entry.
+
+This is a safety net in the extension, not a WordPress permission. For a hard guarantee, also connect the website with an account that cannot edit (for example a Contributor or a custom read-only role).
+
+## Getting to know a website
+
+On a website Claude has not worked on in this chat, it can read its setup first:
+
+> On website-2, what theme and plugins does it use, and what can this connection do?
+
+> Use website-2's brand colours and fonts for the new landing page.
+
+- `get_site_context` shows the theme, the plugins it detects (SEO plugin, WooCommerce, custom fields, page builders, multilingual, forms, caching), the SEO Bridge version, the post types, and what the connected account may do. Plugins are read from the plugin list for Administrator accounts and from the REST API otherwise, so an Editor account may see fewer.
+- `get_brand_styles` shows the theme's colour palette, gradients, fonts, font sizes and spacing, including changes saved in the Site Editor, so new content uses the site's own presets.
+
+## Previewing a change before it is applied
+
+> Show me exactly what would change on the live About page if you shorten the intro.
+
+- `preview_edit` shows every field before and after, the paragraphs removed and added, and any warning. It writes nothing.
+- `stage_edit` saves the change as a WordPress **autosave** of a published page. Open the page in the WordPress editor to preview it; the live page does not change until you approve and Claude applies it.
+
+## Safety checks on content changes
+
+Two checks stop changes that would quietly damage a page. Nothing is written when either one refuses:
+
+- **Page builders.** A page built with Elementor, Bricks, Beaver Builder, Breakdance or Oxygen keeps its layout in the builder's own data, so changing its content would not change the page. On WPBakery, Divi and Avada pages, replacing the whole content would remove the layout; text changes with `edit_blocks` still work. Titles, SEO fields, images and categories can always be changed. For Elementor pages, use the [Elementor tools](#elementor-pages).
+- **Content loss.** A change that keeps less than half of a post's text, or of its images and embeds, is refused. This usually means a shortened copy was sent by mistake.
+
+If you really want the change anyway, say so, and Claude repeats it with `allow_page_builder` or `allow_content_loss`.
+
+## Blocks the website has
+
+Before Claude writes block markup for a page, it can check which blocks the website actually has. That includes WordPress core blocks, the theme's blocks and plugin blocks such as ACF or WooCommerce blocks. Nothing needs installing for this.
+
+> On website-2, which ACF blocks are there, and what fields does the FAQ block take?
+
+> Check this content against website-2's blocks before saving it.
+
+- `list_block_types` lists them (filter by `namespace` such as `acf`, by `category`, or search).
+- `get_block_type` shows one block's settings, allowed values, and where it may be placed (for example a Column only inside Columns). Give the full name, such as `core/heading` or `acf/faq`.
+- `check_blocks` checks content before it is saved. It reports blocks the website does not have, wrong setting types and values, and blocks in the wrong place. It cannot check that a static block's HTML is exactly what the block would save; the editor reports that when the page is opened.
+
+## Elementor pages
+
+Pages built with Elementor keep their layout in Elementor's own data, not in the page content, so the normal post tools cannot change them. With **SEO Bridge 1.5.0** or later and **Elementor 3.0** or later on the site:
+
+> On website-1, show me the Elementor layout of the Florida page (ID 1941).
+
+> Change the main heading to "Steel Buildings Florida" and remove the second button. I approve editing the live page.
+
+> Design a landing page in Elementor for draft 2210: a hero with a heading, text and a "Get a quote" button, then three feature columns. Use the full-width Elementor Canvas template.
+
+How it works:
+- `get_elementor_layout` shows every section, column, container and widget with its id and visible text. With `widgets: true` it also lists the widgets the site has (Elementor, Elementor Pro and add-ons).
+- `update_elementor_layout` changes one widget's settings, replaces text inside one widget, adds or removes elements, or replaces the whole layout. It can also change the page's Elementor settings, such as the template (`elementor_canvas`, `elementor_header_footer`, or a theme page template).
+- Before anything is saved, the extension and the bridge both check the layout. They refuse widgets the site does not have (Elementor would silently drop them), elements nested in a way Elementor does not allow, and duplicate ids. Changes to the page's title or status through page settings are refused too; those keep going through the post tools and their approvals.
+- The page title is confirmed. Saving goes through Elementor itself, so it regenerates its CSS and keeps a revision.
+- Every result includes the previous layout (`restore`), and Elementor's **History → Revisions** works as usual.
+
+Safety rules:
+- A page that is not built with Elementor yet is converted only when you agree. Claude then sends `convert: true`, and the page's current content is replaced by the layout. Build new Elementor pages from a fresh draft.
+- A page built with another builder (Divi, Bricks, WPBakery…) is refused.
+- If **someone else** has the page open in an editor, the change is refused until they close it. WordPress cannot tell when the **same account** the extension uses has the page open in Elementor. Close Elementor before asking Claude to change that page; otherwise saving in Elementor afterwards overwrites Claude's change.
+- Accounts without the "unfiltered HTML" capability get their text filtered like post content and cannot add the HTML widget.
+
+## Changes for review in the block editor
+
+When someone is working on a page in the WordPress block editor, or wants to see a change before it is saved, Claude can prepare the change instead of saving it. Needs **SEO Bridge 1.5.0** or later.
+
+> On website-1, prepare the county wording change on the Florida page (ID 1941) for me to review in the editor.
+
+1. `queue_editor_changes` prepares the change (block edits exactly like `edit_blocks`, or a whole new content) from the saved version of the page. The page itself is not changed.
+2. Open the page in the block editor (`edit_url` in the result), or keep it open. Within about 15 seconds a notice appears: *Claude prepared "…" for this page*, with **Apply** and **Dismiss**.
+3. **Apply** puts the change into the editor. Nothing is saved yet: review it, then click **Save** or **Update** to keep it, or **Undo** to take it out.
+4. `list_editor_changes` shows each change as pending, applied or dismissed, and whether an applied change has been saved. `cancel_editor_change` withdraws a pending one.
+
+The editor never applies a change over your own unsaved edits (save or undo them first), or to a newer version of the page than the change was prepared from (ask Claude to prepare it again). Changes expire after 14 days, and at most 20 can wait per page. Pages built with Elementor or another page builder are not edited in the block editor, so changes cannot be queued for them; use the Elementor tools instead. Sites using the Classic Editor plugin do not show the notice.
+
 ## Website IDs and prompts
 
 Website groups have stable IDs independent of their friendly names: website-1, website-2, website-3, website-4, and website-5.
@@ -237,6 +321,8 @@ Configuration precedence:
 4. Otherwise complete previous single-site settings appear as site_id default.
 
 New groups always require their own folder. To return to old settings after disabling all filled groups, clear the groups first. Keep previous bundles for rollback.
+
+From 1.9.0, Elementor pages and changes for review in the block editor need SEO Bridge 1.5.0 on the site: upload the new mkt-wp-publisher-seo-bridge.zip under Plugins > Add New > Upload Plugin and choose Replace current with uploaded. Everything else keeps working with older bridges; the new tools say clearly when a site needs the update.
 
 ## Tools and responses
 

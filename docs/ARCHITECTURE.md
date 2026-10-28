@@ -17,6 +17,8 @@ One process, no network listener, no dependencies.
 
 ## Modules (`server/`)
 
+The whole `server/` folder except `index.js`, `service.js`, `rpc.js` and `https-fetch.js` is the same code as WP Publisher for ChatGPT's `core/` folder. Change it in both repositories together and keep the files identical.
+
 | File | Responsibility |
 | --- | --- |
 | `index.js` | Entry point. Calls `start()`. |
@@ -32,6 +34,13 @@ One process, no network listener, no dependencies.
 | `tools/taxonomy.js` | `list_authors`, `list_categories`, `list_tags`, `create_term`. |
 | `tools/media.js` | `list_images`, `upload_image`, and image content sniffing. |
 | `tools/posts.js` | `list_posts`, `get_post`, `create_draft`, `update_draft`, `publish_post`, `schedule_post`, plus the shared helpers: post/page context, SEO Bridge check, slug and concurrency guards. |
+| `tools/site.js` | `get_site_context`, `get_brand_styles`, `list_block_types`, `get_block_type`, `check_blocks` (WordPress core `/wp/v2/block-types`; uses the block parser in `blocks.js`). |
+| `builders.js` | Page-builder detection (SEO Bridge `mkt_builder`, else content markers and template) and the refusal used by content writes. |
+| `content.js` | Visible text, media and paragraphs of content: the preview of `preview_edit` / `stage_edit` and the content-loss guard. |
+| `tools/elementor.js` | `get_elementor_layout`, `update_elementor_layout`: bridge check (`mkt_elementor` in `OPTIONS`), outline, targeted changes by element id, and the same structure checks the bridge applies. |
+| `tools/editor-queue.js` | `queue_editor_changes`, `list_editor_changes`, `cancel_editor_change` against the bridge's `mkt-seo-bridge/v1` namespace (`ctx.request(…, {namespace})`). |
+
+`service.js` refuses every tool without `readOnlyHint` on a website configured as `read_only`, before the handler runs.
 
 Every handler receives `ctx = {site, signal, state, request(endpoint, options), usesPlainPermalinks(), result(data)}` and the validated `args`. `result()` wraps data as `{site_id, site_url, data}`.
 
@@ -117,6 +126,11 @@ A WordPress plugin that calls `register_rest_field('post'|'page', 'mkt_seo', …
 - **update:** `sanitize_text_field`, then `update_post_meta` (an empty string → `delete_post_meta`). Needs `edit_post`.
 - **early save (1.1.0):** for existing posts, a `rest_pre_insert_{post|page}` filter saves the values before WordPress saves the post, so Yoast rebuilds its indexable from them; `update_callback` then skips. New posts are saved by `update_callback` (they have an ID only after insert).
 - **schema:** `plugin.enum` is set to the active SEO plugin (`yoast`, `rank-math` or `none`), and `version.enum` to the bridge version, when the field is registered. Fields carry `maxLength` (and a URL pattern for `canonical`), so WordPress rejects bad values before anything is saved. That lets the extension find out with one `OPTIONS` request, before writing anything, whether SEO writes will work.
+
+From 1.5.0 the bridge also has:
+
+- **`mkt_elementor`** (post types): read with `?mkt_elementor=1`; writes validated in `validate_elementor` → `plan_elementor` (also re-run in `update_elementor`), then saved with `\Elementor\Plugin::$instance->documents->get($id)->save(['elements' => …, 'settings' => …])` and `set_is_built_with_elementor(true)`. `locked_by()` mirrors `wp_check_post_lock()` (not loaded during REST).
+- **Editor queue**: routes under `mkt-seo-bridge/v1/editor-queue/{id}` storing items in the `_mkt_editor_queue` post meta (slashed with `wp_slash()` because `update_post_meta()` unslashes), and `assets/editor-queue.js`, enqueued on `enqueue_block_editor_assets` for the post editor only.
 
 ## Security model
 

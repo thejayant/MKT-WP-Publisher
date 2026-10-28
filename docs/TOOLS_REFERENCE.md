@@ -10,6 +10,8 @@ Every tool except `list_sites` requires `site_id` (pattern `^[a-z0-9]+(?:-[a-z0-
 
 Unknown arguments are always rejected.
 
+**Read-only websites:** on a website with `read_only` (setting *Website N | Read-only*, or `"read_only": true` in a JSON profile), every tool whose `readOnlyHint` is false is refused before any request is made, with an error that names the website. `list_sites` reports `read_only: true` for it.
+
 **Post types:** `list_posts`, `get_post`, `list_blocks`, `edit_blocks`, `create_draft`, `update_draft`, `edit_published_post`, `publish_post`, `unpublish_post`, `schedule_post` and `upload_image` (for `featured_for_post_id`) take an optional `post_type`:
 - `post` (default) and `page` need no lookup. Pages use `/wp/v2/pages`; they don't take `categories`, `tags` or `excerpt`, but they can have a `parent` page.
 - **Any other post type the site offers over the REST API** works too, for example `product` (WooCommerce) or `locations`. On first use per site, the tool reads `/wp/v2/types/{type}`, `/wp/v2/taxonomies?type={type}` and the type's schema (`OPTIONS`), then caches them.
@@ -20,13 +22,13 @@ Unknown arguments are always rejected.
 
 Keep `post_type` paired with the ID, the same way you keep `site_id`.
 
-**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only the tools that change public content are `destructiveHint: true`: `update_term`, `edit_published_post`, `edit_blocks`, `update_fields`, `publish_post`, `unpublish_post`, `schedule_post` and `update_product`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
+**Annotations:** read-only tools are `readOnlyHint: true, idempotentHint: true`. Only the tools that change public content are `destructiveHint: true`: `update_term`, `edit_published_post`, `edit_blocks`, `update_fields`, `update_elementor_layout`, `publish_post`, `unpublish_post`, `schedule_post` and `update_product`. `update_draft` is `idempotentHint: true`; `create_draft` and `upload_image` are not idempotent. All tools are `openWorldHint: true` except `list_images`, which reads only the local folder.
 
 **Plain permalinks:** if `/wp-json/...` returns WordPress's HTML 404 page, the server retries that request once as `/?rest_route=/wp/v2/...`. It keeps using that form for the site until the extension restarts. The retry is safe for writes, because an unrouted 404 means WordPress processed nothing.
 
 **Retries and timeouts:** reads (`GET`, `OPTIONS`) that get 429, 502, 503 or 504 are retried up to twice, after 1 s and 3 s, or after the `Retry-After` header (capped at 10 s). Writes are never retried. Each request times out after 60 s; image uploads after 180 s.
 
-**Concurrency guard:** `update_draft`, `edit_published_post`, `publish_post`, `unpublish_post` and `schedule_post` accept `expected_modified_gmt`, the `modified_gmt` value from `get_post` or `list_posts`. If the post was changed in WordPress since then, the call fails and nothing is written. A trailing `Z` or `+00:00` is ignored when comparing.
+**Concurrency guard:** `update_draft`, `edit_published_post`, `edit_blocks`, `preview_edit`, `stage_edit`, `publish_post`, `unpublish_post` and `schedule_post` accept `expected_modified_gmt`, the `modified_gmt` value from `get_post` or `list_posts`. If the post was changed in WordPress since then, the call fails and nothing is written. A trailing `Z` or `+00:00` is ignored when comparing.
 
 ---
 
@@ -42,6 +44,18 @@ Read-only. `GET /users/me?context=edit`
 **Returns `data`:** `{ connected, user_id, name, slug, roles, permissions: { upload_files, publish_posts, edit_posts, edit_others_posts }, rest_api_style, note }`
 
 Capabilities are what WordPress reports. No write is attempted. `rest_api_style` is `pretty (/wp-json)` or `plain (?rest_route=)`.
+
+## get_site_context
+Read-only. The first call on a site you have not worked on. Every lookup except the site index is optional: an account that cannot read plugins or settings still gets the rest, with `notes` saying what was not available.
+
+Reads `/` (site index), `/users/me`, `/settings`, `/plugins?status=active` (administrators), `/themes?status=active`, `OPTIONS /posts` (SEO Bridge) and `/types`.
+
+**Returns `data`:** `site` (name, description, url, language, timezone, `rest_api_style`), `access` (`mode`: `read_only` on a read-only website, else `full`; user, `can_publish`, `can_upload`, `can_edit_others`, `is_administrator`), `theme` (name, stylesheet, parent, version, `block_theme`), `plugins` (SEO plugin, store, custom fields, page builders, multilingual, forms, cache; `detected_from` is the plugin list for administrators, otherwise REST API namespaces), `seo_bridge` (installed, version, plugin), `post_types`, `guidance` and `notes`.
+
+## get_brand_styles
+Read-only. The active theme's `theme.json` presets merged with changes saved in the Site Editor (global styles).
+
+**Returns `data`:** `theme`, `colors` (slug, name, value, CSS variable), `gradients`, `font_sizes`, `font_families`, `spacing_sizes`, `layout` (content and wide size), `base_styles` (background, text, link, heading and body fonts, body size, button colours), `how_to_use` (refer to presets by slug in block attributes, such as `{"textColor":"<slug>"}`) and `notes`.
 
 ## list_authors
 Read-only.
@@ -231,6 +245,24 @@ Write. **Takes content off the public site.** Use only after the user explicitly
 - Works on `publish`, `private`, `future` (scheduled) and `pending` posts/pages, and sends `{ status: 'draft' }`. An existing draft is returned unchanged, with no write.
 - **Returns `data`:** the summary plus `previous_status`. A formerly scheduled post keeps its future date; the `warning` says to use `schedule_post` again, or `publish_post` with `publish_date` to publish it now.
 
+## preview_edit
+Read-only: writes nothing. Takes the same fields as `update_draft` / `edit_published_post` (title, content, `content_format`, slug, excerpt, categories, tags, featured image, author, parent, SEO, `publish_date`) or `changes` as for `edit_blocks`, plus `expected_modified_gmt`, `allow_page_builder` and `allow_content_loss`.
+
+**Returns `data`:** each field before and after, the paragraphs removed and added, text and media counts before and after, `content_loss` when the change would be refused by the content-loss check, a `warning` (page builder, content loss, URL change, nothing to change), and `apply_with` (the tool to use, with `expected_modified_gmt`). Show it to the user and get approval before applying.
+
+## stage_edit
+Write, but the live post does not change: saves the proposed title, content or excerpt (or `changes` as for `edit_blocks`) as a WordPress **autosave** of a published or private post (`POST {route}/{id}/autosaves`), so the user can open it in the WordPress editor and preview it. Drafts are refused: change them with `update_draft` and review them at their `preview_url`. The content-loss and page-builder checks apply.
+
+**Returns `data`:** the same preview as `preview_edit`, plus the editor link and `apply_with`.
+
+## Checks on content changes
+`update_draft`, `edit_published_post`, `edit_blocks` and `stage_edit` refuse a content change, with nothing written, when:
+
+- **The page is built with a page builder.** For builders that keep the layout in their own data (Elementor, Bricks, Beaver Builder, Breakdance, Oxygen), changing the content would not change the page. For WPBakery, Divi and Avada, a full replacement would remove the layout; `edit_blocks` with `replace_text` still works inside it. SEO Bridge 1.4.0+ (`mkt_builder`) makes the detection exact; without it the stored and rendered content and the page template are checked. Other fields (title, slug, excerpt, featured image, taxonomy, author, SEO) can still be changed. Pass `allow_page_builder: true` only if the user explicitly wants this anyway. For Elementor pages use `get_elementor_layout` / `update_elementor_layout`.
+- **Most of the content would be lost.** The change keeps less than half of the visible text (posts of 200+ characters), or less than half of the images, videos and embeds (3 or more), or leaves an image or embed without a source. Pass `allow_content_loss: true` only if the user explicitly wants to remove that content.
+
+On ordinary posts these checks need no extra request: the edit sends exactly the same requests as before.
+
 ## list_blocks
 Read-only. `GET /{route}/{post_id}?context=edit` (raw content).
 
@@ -314,6 +346,92 @@ Each change is one of:
 - Changes that leave every value as it is are refused.
 
 **Returns `data`:** the item, `changes` (`{path or meta, before, after}`), `live`, `restore.changes` (the previous whole values; pass them back to `update_fields` to undo), `undo`, and a `warning` if WordPress stored a value differently from what was sent.
+
+## list_block_types
+Read-only. No plugin needed: WordPress core's `GET /wp/v2/block-types[/{namespace}]?_fields=name,title,description,category,parent,ancestor,is_dynamic`.
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `namespace` | string | `core`, `acf`, `woocommerce`, … (lowercase letters, digits and hyphens) |
+| `category` | string | block category such as `text`, `design`, `widgets` |
+| `search` | string | matches name, title and description, ignoring case |
+
+**Returns `data`:** `count`, `namespaces` (count per namespace), `block_types` (`{name, title, category, description (120 characters), parent?, ancestor?, dynamic?}`, sorted by name) and a `note` on `parent`/`ancestor`.
+
+## get_block_type
+Read-only. `name` must include the namespace, e.g. `core/heading` or `acf/faq`. Sends `GET /wp/v2/block-types/{name}`.
+
+**Returns `data`:** `name`, `title`, `description`, `category`, `dynamic`, `attributes` (each `{type, enum?, default?, source?, selector?, attribute?}`; values with a `source` live in the block's HTML, not in the comment's JSON; `lock` and `metadata` are left out), `supports`, `parent`, `ancestor`, `allowed_blocks`, `styles`, `variations` (up to 50, with their attributes) and `how_to_write`. A block the site does not have gives a clear error naming the site.
+
+## check_blocks
+Read-only. `content` (required) is block markup. Parses it with the same block grammar as `edit_blocks`; unbalanced block comments are reported without a request. Otherwise reads the site's block types once and checks every block:
+- **problems** (`ok: false`): block types the site does not have (`unknown_block_types` lists them), attribute types and `enum` values, `parent` (direct parent), `ancestor` (somewhere above), `allowed_blocks` (children).
+- **warnings:** attributes the block does not register (global ones such as `className`, `style`, `lock`, `metadata`, `align`, colors and `layout` are not reported), attributes that are read from HTML, and static blocks written as self-closing comments.
+
+It cannot check that a static block's HTML matches its `save()` output; the editor reports that when the content is opened.
+
+## get_elementor_layout
+Read-only. Needs SEO Bridge 1.5.0+ and Elementor 3.0+ (checked with `OPTIONS` on the item's route via `mkt_elementor.source`/`version`; cached per site and route).
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_id` | integer ≥ 1, required | with `post_type` (default `post`) |
+| `post_type` | post type slug | |
+| `widgets` | boolean | also return `widget_types`, the widgets registered with Elementor on the site |
+| `full` | boolean | also return `elements`, the complete layout JSON |
+
+Sends `GET {route}/{id}?context=edit&mkt_elementor=1`.
+
+**Returns `data`:** the item (`post_id`, `post_type`, `status`, `title`, `url`, `modified_gmt`, `preview_url` for unpublished items), `built_with_elementor`, `editable` (Elementor allows this account and post type), `elementor_version`, `bridge_version`, `template`, `page_settings`, `outline` (`{element, path, depth, type, text?, children?}` for up to 400 elements; `type` is the widget type for widgets), `total_elements`, `outline_truncated`, and a `note` for pages not built with Elementor, built with another builder, not editable, or open in someone else's editor.
+
+## update_elementor_layout
+Write. **Use only after the user explicitly approves this site, page and change.** Published pages change immediately.
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_id`, `post_type` | | as above |
+| `changes` | list of 1–50 objects | targeted changes, see below; or |
+| `elements` | list of objects | the whole new layout (sections/containers → columns → widgets, as Elementor stores them). Elements without `id` get a new 7-character id |
+| `page_settings` | object | merged into the page's Elementor settings; `null` removes one. `template` must be `default`, `elementor_canvas`, `elementor_header_footer`, `elementor_theme` or one of the theme's page templates. `post_*`, `menu_order`, `comment_status` and `ping_status` are refused |
+| `convert` | boolean | needed to switch a page that is not built with Elementor; its current content is replaced |
+| `confirm_title` | string, required | the current title |
+| `confirm_edit` | `true`, required | |
+| `expected_modified_gmt` | string | concurrency guard |
+
+Each change is one of:
+- `{ "element": "3f2a9c1", "settings": { "title": "New", "header_size": null } }`: merge settings into one element; `null` removes a setting.
+- `{ "element": "3f2a9c1", "replace_text": { "find": "…", "with": "…", "all": false } }`: replace text in that element's settings, including rows of repeaters (icon lists, tabs…). Must match exactly once unless `all: true`.
+- `{ "remove": "3f2a9c1" }`: remove an element and everything inside it.
+- `{ "insert": {…} or [ … ], "parent": "id" or null, "position": 0 }`: insert elements into a parent (`null` = top level) at a position (default: the end). Missing `id`, `settings` and `elements` are filled in.
+
+**Checks before any write (in the extension, then again in the bridge):** title and modified date; not in the trash; not owned by another page builder; nobody else has it open in an editor (WordPress's post lock); Elementor allows this account and post type; `convert` for pages not built with Elementor; ids unique and well formed; nesting (top level: sections or containers; sections hold columns; columns hold widgets or one level of inner section; containers hold containers and widgets; widgets hold nothing); widgets registered on the site; at most 5,000 elements, 30 levels and 5 MB; changes that leave everything as it is are refused. Accounts without `unfiltered_html` get settings text filtered with `wp_kses_post` and cannot use the HTML widget.
+
+Sends `POST {route}/{id}` with `{mkt_elementor: {elements?, page_settings?, convert?}}`. The bridge saves through Elementor's `Document::save()`, so Elementor regenerates the page CSS, records its version, and keeps a revision.
+
+**Returns `data`:** the item, `changes` (one entry per change, or `{replaced_layout, elements_before}`), `total_elements`, `live`, `converted_to_elementor`, `restore.elements` (the previous layout, when under 60 KB; pass it back as `elements` to undo), `undo`, and a `warning` if Elementor stored the layout differently from what was sent.
+
+## queue_editor_changes
+Write, but it never changes the post: it adds a proposal to the post's editor queue (SEO Bridge 1.5.0+, REST namespace `mkt-seo-bridge/v1`).
+
+| Arg | Type | Notes |
+| --- | --- | --- |
+| `post_id`, `post_type` | | |
+| `changes` | list of 1–50 objects | block edits, exactly as in `edit_blocks`; or |
+| `content` | string | the whole new content; `content_format: "markdown"` converts it |
+| `label` | string | shown in the editor notice; default "Changes from Claude" |
+| `expected_modified_gmt` | string | concurrency guard |
+
+Reads the post (`context=edit`), computes the new content from the saved content, reads the queue (which also confirms the bridge supports it), then `POST /mkt-seo-bridge/v1/editor-queue/{id}` with `{content, base_modified_gmt, label, summary}`. Refused: posts in the trash, pages owned by a page builder (`mkt_builder`), and changes that leave the content as it is.
+
+**Returns `data`:** the post, `batch_id`, `queue_status` (`pending`), `label`, `changes`, `edit_url`, and `next`.
+
+In the block editor, the bridge's script checks the queue every 15 seconds while the tab is visible and shows each pending change as a notice with **Apply** and **Dismiss**. Apply replaces the editor's blocks only when the editor has no unsaved changes and the post's `modified_gmt` equals the change's `base_modified_gmt`; the person then saves or undoes. Changes expire after 14 days; at most 20 can be pending per post.
+
+## list_editor_changes
+Read-only. Returns the post, `bridge_version`, `pending` (count), `edit_url`, and `items`, newest first: `{batch_id, status (pending | applied | dismissed), label, created_gmt, updated_gmt, edits, summary, stale?, saved?, note?}`. `stale` means the post was saved after the change was prepared, so the editor will refuse it. `saved` compares an applied change with the saved content (whitespace between tags ignored).
+
+## cancel_editor_change
+Write (the queue only). `batch_id` (16 hex characters) from `queue_editor_changes` or `list_editor_changes`. Dismisses a pending change; an applied or dismissed one is left as it is and reported in `note`.
 
 ## list_terms / get_term / update_term
 Any taxonomy: `category`, `post_tag`, `product_cat`, `product_tag`, or custom. `category` and `post_tag` need no lookup. Others are looked up once per site via `/wp/v2/taxonomies/{taxonomy}`. WordPress internal taxonomies (`nav_menu`, `post_format`, …) are refused.

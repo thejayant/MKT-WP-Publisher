@@ -229,4 +229,4 @@ function applyChanges(content, changes) {
   return {content: result, diff, edits: edits.length};
 }
 
-module.exports = {parse, outline, applyChanges, serializeAttrs};
+module.exports = {parse, entries, outline, applyChanges, serializeAttrs};

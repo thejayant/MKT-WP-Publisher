@@ -40,6 +40,12 @@ const SCENARIOS = [
   'aioseo-missing-table',
   'seo-plugin-precedence',
   'page-builder',
+  'elementor-read',
+  'elementor-write',
+  'elementor-refusals',
+  'elementor-not-active',
+  'editor-queue',
+  'editor-queue-script',
 ];
 
 test('SEO Bridge plugin: PHP syntax', {skip}, () => {

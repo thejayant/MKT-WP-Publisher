@@ -68,7 +68,7 @@ test('F3: SEO fields are checked via OPTIONS, sent as mkt_seo and reported back'
  await assert.rejects(call('update_draft',{site_id:'site-a',post_id:30,seo:{robots:'noindex'}}),/Unknown seo field/);
  await assert.rejects(call('update_draft',{site_id:'site-a',post_id:30,seo:{title:5}}),/seo.title must be text/);
  const none=mock([{schema:{properties:{}}}]);await assert.rejects(makeService(env,none.f)('create_draft',{site_id:'site-b',title:'T',content:'C',slug:'t',seo}),/SEO Bridge plugin on site site-b.*Nothing was saved/);assert.equal(none.calls.length,1);
- const off=mock([seoSchema('none')]);await assert.rejects(makeService(env,off.f)('update_draft',{site_id:'site-b',post_id:1,seo}),/neither Yoast SEO nor Rank Math/);assert.equal(off.calls.length,1);
+ const off=mock([seoSchema('none')]);await assert.rejects(makeService(env,off.f)('update_draft',{site_id:'site-b',post_id:1,seo}),/no supported SEO plugin is active for posts and pages \(Yoast SEO or Rank Math/);assert.equal(off.calls.length,1);
 });
 test('F6: schedule_post validates title, time and status, then sets future with date_gmt',async()=>{
  const at=new Date(Date.now()+3*86400000);at.setUTCSeconds(0,0);const iso=at.toISOString().replace('.000Z','+00:00');

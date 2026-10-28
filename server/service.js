@@ -15,6 +15,9 @@ const handlers = {
   ...require('./tools/posts.js'),
   ...require('./tools/products.js'),
   ...require('./tools/fields.js'),
+  ...require('./tools/site.js'),
+  ...require('./tools/elementor.js'),
+  ...require('./tools/editor-queue.js'),
 };
 
 /**
@@ -41,16 +44,21 @@ function makeService(env = process.env, fetcher = global.fetch, options = {}) {
 
     if (name === 'list_sites') {
       return {
-        sites: [...sites.values()].map(({site_id, label, site_url, image_dir}) => ({site_id, label, site_url, ...(image_dir ? {image_folder: image_dir} : {})})),
+        sites: [...sites.values()].map(({site_id, label, site_url, image_dir, read_only}) => ({site_id, label, site_url, ...(image_dir ? {image_folder: image_dir} : {}), ...(read_only ? {read_only: true} : {})})),
         max_sites: MAX_SITES,
       };
     }
     const site = sites.get(args.site_id);
     if (!site) throw new Error('Unknown site_id. Use list_sites to choose a configured destination.');
+    // Read-only websites get the tools that only read; everything else is refused before any request is made.
+    if (site.read_only && !definition.annotations.readOnlyHint) {
+      throw new Error('Website ' + site.site_id + ' is set to read-only in the extension settings, so ' + name + ' is not available for it. Nothing was sent to WordPress. To make changes, turn off "Read-only" for this website in the extension settings and restart the extension.');
+    }
     const ctx = {
       site,
       signal,
       state,
+      readOnly: site.read_only === true,
       request: (endpoint, options) => client.request(site, signal, endpoint, options),
       usesPlainPermalinks: () => client.usesPlainPermalinks(site),
       result: data => ({site_id: site.site_id, site_url: site.site_url, data}),

@@ -1,6 +1,6 @@
 # MKT WP Publisher
 
-**Version 1.7.0 · Developed by Jayant**
+**Version 1.9.0 · Developed by Jayant**
 
 A Claude Desktop extension that lets Claude draft, schedule, publish and edit blog posts and pages on **up to five WordPress websites**. Each website has its own login (WordPress Application Password) and its own local blog image folder. Content is always created as a draft first. Publishing, scheduling, editing a live post and unpublishing each need your explicit approval.
 
@@ -28,6 +28,12 @@ A Claude Desktop extension that lets Claude draft, schedule, publish and edit bl
 | `get_product` / `update_product` | Reads and changes WooCommerce store data: price, sale price, SKU, stock, short description, categories, gallery. |
 | `create_product` | Creates a simple WooCommerce product, always as a draft. |
 | `inspect_fields` / `update_fields` | Lists and changes the custom fields (Advanced Custom Fields, and meta keys the site allows) of a page, product or category, one value at a time, including a single row inside a repeater or flexible content field. Needs SEO Bridge 1.3. |
+| `get_site_context` | Reads a website's setup in one call: theme, plugins (SEO, store, custom fields, page builders…), SEO Bridge, post types, and what the connection may do. |
+| `get_brand_styles` | Reads the theme's colours, fonts, sizes and spacing (Site Editor changes included), so content uses the site's own presets. |
+| `preview_edit` / `stage_edit` | Shows an edit field by field and paragraph by paragraph before it is applied (writes nothing), or saves it as a WordPress autosave of a live post to preview in the editor (the live page does not change). |
+| `list_block_types` / `get_block_type` / `check_blocks` | Lists the blocks the website actually has (core, theme and plugin blocks such as ACF), shows one block's attributes and nesting rules, and checks block markup against them before it is saved. No plugin needed. |
+| `get_elementor_layout` / `update_elementor_layout` | Reads an Elementor page as an outline of sections, containers and widgets, and changes it (one widget's settings or text, add or remove elements, or a whole new layout), saved through Elementor itself. Needs SEO Bridge 1.5 and Elementor 3.0+. |
+| `queue_editor_changes` / `list_editor_changes` / `cancel_editor_change` | Prepares a change for someone working in the WordPress block editor: it appears there with **Apply** and **Dismiss**, and is kept only when they click Save or Update. Needs SEO Bridge 1.5. |
 
 The post tools work on any post type the site offers: posts, pages, WooCommerce products (`product`) and custom types such as `locations`.
 
@@ -36,6 +42,14 @@ Every draft comes with a `preview_url` for review. Reads are retried automatical
 **SEO fields** (Yoast SEO or Rank Math: SEO title, meta description, focus keyword, canonical URL) need the small companion plugin **MKT Publisher SEO Bridge for Yoast & Rank Math** installed on each site. See [the user guide](docs/USER_GUIDE.md#seo-fields-yoast-seo--rank-math).
 
 **Custom fields** (state, city, pricing and financing pages built from ACF fields; product and category extras) need SEO Bridge **1.3.0** or later on the site. See [the user guide](docs/USER_GUIDE.md#custom-fields-acf).
+
+**Elementor pages** and **changes reviewed in the block editor** need SEO Bridge **1.5.0** or later. See [Elementor pages](docs/USER_GUIDE.md#elementor-pages) and [Changes for review in the block editor](docs/USER_GUIDE.md#changes-for-review-in-the-block-editor).
+
+**Safety checks on content changes:** a content change on a page built with a page builder, or one that would drop most of a post's text or images, is refused with nothing written unless the user explicitly allows it (`allow_page_builder`, `allow_content_loss`). See [the tools reference](docs/TOOLS_REFERENCE.md#checks-on-content-changes).
+
+**Same features as WP Publisher for ChatGPT:** both share the same tool code; only `list_images` (a local folder) is Claude-only.
+
+**Read-only websites:** turn on *Read-only* for a website in the extension settings and only the reading tools work on it (for audits of client sites). Everything else is refused before it reaches WordPress.
 
 Not included: publishing new products in one step (they are created as drafts), editing theme templates, deleting content, uploading images from a URL. See [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
 

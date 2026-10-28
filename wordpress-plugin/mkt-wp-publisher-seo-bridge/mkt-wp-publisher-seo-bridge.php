@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       MKT Publisher SEO Bridge for Yoast & Rank Math
  * Description:       Lets WP Publisher (for Claude and for ChatGPT) read and update the SEO title, meta description, focus keyword and canonical URL of posts and pages managed by Yoast SEO, Rank Math, All in One SEO or SEOPress, and their Advanced Custom Fields, through the WordPress REST API.
- * Version:           1.4.0
+ * Version:           1.5.0
  * Author:            Jayant
  * Requires at least: 5.6
  * Requires PHP:      7.4
@@ -30,6 +30,14 @@
  * 1.4.0 also adds a read-only "mkt_builder" field: the page builder (Elementor, Bricks, Divi, WPBakery…) that owns a
  * post's layout, read from the builder's own post meta, so the extension does not overwrite builder pages.
  *
+ * From 1.5.0 a field "mkt_elementor" reads and writes Elementor layouts (Elementor 3.0+), only for requests that ask
+ * for it (?mkt_elementor=1, or a write containing it). Writes are checked first (element ids, nesting, registered
+ * widgets, page settings) and then saved through Elementor's own Document::save(), so Elementor regenerates its CSS,
+ * records its version and keeps revisions. A page another user has open in an editor is never written.
+ * 1.5.0 also adds the "editor queue" (REST namespace mkt-seo-bridge/v1): the extension can leave a proposed new
+ * version of a post's block content, and a small script in the block editor offers it to whoever has the post open,
+ * with Apply and Dismiss buttons. Applying changes only the editor; the person reviews it and saves.
+ *
  * None of these SEO plugins registers its post meta for the REST API, which is why this bridge exists.
  * For existing posts the values are saved just BEFORE WordPress saves the post, so Yoast's cached
  * "indexable" (which drives the page's <title> and meta tags) is rebuilt with the new values right away.
@@ -55,7 +63,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 
 	final class MKT_SEO_Bridge {
 
-		const VERSION     = '1.4.0';
+		const VERSION     = '1.5.0';
 		const FIELD       = 'mkt_seo';
 		const BUILDER     = 'mkt_builder';
 		const TEXT_DOMAIN = 'mkt-wp-publisher-seo-bridge';
@@ -70,6 +78,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 		public static function boot( $file ) {
 			self::$file = $file;
 			add_action( 'rest_api_init', array( __CLASS__, 'register' ) );
+			add_action( 'enqueue_block_editor_assets', array( __CLASS__, 'enqueue_editor_queue' ) );
 			if ( is_admin() ) {
 				add_action( 'admin_menu', array( __CLASS__, 'add_status_page' ) );
 				add_action( 'admin_post_mkt_fields_save_meta_keys', array( __CLASS__, 'save_meta_keys' ) );
@@ -323,7 +332,17 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 						'schema'       => self::builder_schema(),
 					)
 				);
+				register_rest_field(
+					$post_type,
+					self::ELEMENTOR,
+					array(
+						'get_callback'    => array( __CLASS__, 'get_elementor' ),
+						'update_callback' => array( __CLASS__, 'update_elementor' ),
+						'schema'          => self::elementor_schema(),
+					)
+				);
 			}
+			self::register_queue_routes();
 			foreach ( self::taxonomies() as $taxonomy ) {
 				if ( ! taxonomy_exists( $taxonomy ) ) {
 					continue;
@@ -1352,6 +1371,671 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			exit;
 		}
 
+		/* ---------- Elementor layouts ("mkt_elementor") ---------- */
+
+		const ELEMENTOR              = 'mkt_elementor';
+		const ELEMENTOR_MIN          = '3.0.0';
+		const ELEMENTOR_MAX_BYTES    = 5242880;
+		const ELEMENTOR_MAX_ELEMENTS = 5000;
+		const ELEMENTOR_MAX_DEPTH    = 30;
+
+		/** Elementor 3.0 or later, checked without autoloading. */
+		public static function elementor_active() {
+			return defined( 'ELEMENTOR_VERSION' ) && version_compare( (string) ELEMENTOR_VERSION, self::ELEMENTOR_MIN, '>=' ) && class_exists( 'Elementor\Plugin', false );
+		}
+
+		/** Field schema. "source" and "version" tell the extension, via OPTIONS, whether layouts can be read and written here. */
+		public static function elementor_schema() {
+			return array(
+				'description' => 'Elementor layout for MKT WP Publisher (SEO Bridge ' . self::VERSION . '). Read with ?mkt_elementor=1.',
+				'type'        => array( 'object', 'null' ),
+				'context'     => array( 'edit' ),
+				'properties'  => array(
+					'source'        => array(
+						'type'     => 'string',
+						'enum'     => array( self::elementor_active() ? 'elementor' : 'none' ),
+						'readonly' => true,
+					),
+					'version'       => array(
+						'type'     => 'string',
+						'enum'     => array( self::VERSION ),
+						'readonly' => true,
+					),
+					'elements'      => array( 'type' => 'array' ),
+					'page_settings' => array( 'type' => 'object' ),
+					'convert'       => array( 'type' => 'boolean' ),
+				),
+				'arg_options' => array(
+					'validate_callback' => array( __CLASS__, 'validate_elementor' ),
+					'sanitize_callback' => array( __CLASS__, 'sanitize_elementor' ),
+				),
+			);
+		}
+
+		/** REST read: the layout, only for requests that ask for it (?mkt_elementor=1, or a write containing it). Never throws. */
+		public static function get_elementor( $object, $field_name = '', $request = null ) {
+			try {
+				$post_id = isset( $object['id'] ) ? (int) $object['id'] : 0;
+				if ( ! $post_id || ! ( $request instanceof WP_REST_Request ) || ! $request->has_param( self::ELEMENTOR ) || ! current_user_can( 'edit_post', $post_id ) ) {
+					return null;
+				}
+				return self::read_elementor( $post_id );
+			} catch ( \Throwable $e ) {
+				return null;
+			}
+		}
+
+		/** The Elementor document of a post, or null. */
+		private static function elementor_document( $post_id ) {
+			if ( ! self::elementor_active() ) {
+				return null;
+			}
+			$plugin = \Elementor\Plugin::$instance;
+			if ( ! is_object( $plugin ) || empty( $plugin->documents ) || ! method_exists( $plugin->documents, 'get' ) ) {
+				return null;
+			}
+			$document = $plugin->documents->get( $post_id, false );
+			return is_object( $document ) ? $document : null;
+		}
+
+		/** Whether Elementor lets the current account edit this post (its post type is enabled, the role is allowed). */
+		private static function elementor_editable( $post_id ) {
+			$document = self::elementor_document( $post_id );
+			if ( ! $document ) {
+				return false;
+			}
+			return method_exists( $document, 'is_editable_by_current_user' ) ? (bool) $document->is_editable_by_current_user() : current_user_can( 'edit_post', $post_id );
+		}
+
+		/** Names of the widgets registered with Elementor (core, Pro and add-ons), or null when the list is not available. */
+		public static function elementor_widget_types() {
+			try {
+				if ( ! self::elementor_active() ) {
+					return null;
+				}
+				$plugin  = \Elementor\Plugin::$instance;
+				$manager = is_object( $plugin ) && isset( $plugin->widgets_manager ) ? $plugin->widgets_manager : null;
+				if ( ! is_object( $manager ) || ! method_exists( $manager, 'get_widget_types' ) ) {
+					return null;
+				}
+				$types = $manager->get_widget_types();
+				return is_array( $types ) && $types ? array_values( array_map( 'strval', array_keys( $types ) ) ) : null;
+			} catch ( \Throwable $e ) {
+				return null;
+			}
+		}
+
+		/** The stored layout: Elementor keeps it as JSON text in _elementor_data (older versions as an array). */
+		private static function stored_elements( $post_id, &$unreadable ) {
+			$raw        = get_post_meta( $post_id, '_elementor_data', true );
+			$unreadable = false;
+			if ( is_array( $raw ) ) {
+				return $raw;
+			}
+			if ( ! is_string( $raw ) || '' === $raw ) {
+				return array();
+			}
+			$decoded = json_decode( $raw, true );
+			if ( ! is_array( $decoded ) ) {
+				$unreadable = true;
+				return array();
+			}
+			return $decoded;
+		}
+
+		private static function read_elementor( $post_id ) {
+			$unreadable = false;
+			$elements   = self::stored_elements( $post_id, $unreadable );
+			$settings   = get_post_meta( $post_id, '_elementor_page_settings', true );
+			$out        = array(
+				'source'               => self::elementor_active() ? 'elementor' : 'none',
+				'version'              => self::VERSION,
+				'elementor_version'    => defined( 'ELEMENTOR_VERSION' ) ? (string) ELEMENTOR_VERSION : '',
+				'built_with_elementor' => 'builder' === get_post_meta( $post_id, '_elementor_edit_mode', true ),
+				'editable'             => self::elementor_editable( $post_id ),
+				'template'             => (string) get_post_meta( $post_id, '_wp_page_template', true ),
+				'page_settings'        => is_array( $settings ) && $settings ? $settings : (object) array(),
+				'elements'             => $elements,
+				'widget_types'         => self::elementor_widget_types(),
+				'locked_by'            => self::locked_by( $post_id ),
+			);
+			if ( $unreadable ) {
+				$out['unreadable'] = true;
+			}
+			return $out;
+		}
+
+		/** REST argument validation: everything is checked before WordPress saves anything. */
+		public static function validate_elementor( $value, $request = null, $param = self::ELEMENTOR ) {
+			if ( null === $value ) {
+				return true;
+			}
+			if ( ! is_array( $value ) ) {
+				return self::invalid( sprintf( '%s must be an object.', $param ) );
+			}
+			try {
+				$change = self::sanitize_elementor( $value );
+				if ( ! isset( $change['elements'] ) && ! isset( $change['page_settings'] ) ) {
+					return true; // Only read-only parts were sent back.
+				}
+				$id = $request instanceof WP_REST_Request ? (int) $request->get_param( 'id' ) : 0;
+				if ( ! $id ) {
+					return self::invalid( sprintf( '%s can only be written to an existing item.', $param ) );
+				}
+				$plan = self::plan_elementor( $id, $change, $param );
+				return is_wp_error( $plan ) ? $plan : true;
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_elementor_check_failed', __( 'The Elementor layout could not be checked.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+		}
+
+		/** REST argument sanitising: the writable parts only; null stays null. Values are checked in plan_elementor(). */
+		public static function sanitize_elementor( $value ) {
+			if ( null === $value ) {
+				return null;
+			}
+			$value = is_array( $value ) ? $value : array();
+			$out   = array();
+			foreach ( array( 'elements', 'page_settings' ) as $key ) {
+				if ( array_key_exists( $key, $value ) && null !== $value[ $key ] ) {
+					$out[ $key ] = $value[ $key ];
+				}
+			}
+			if ( ! empty( $value['convert'] ) ) {
+				$out['convert'] = true;
+			}
+			return $out;
+		}
+
+		/**
+		 * Check a layout change and return what to save.
+		 *
+		 * @return array|WP_Error {elements?: list, page_settings?: array}
+		 */
+		private static function plan_elementor( $post_id, array $change, $param ) {
+			if ( ! self::elementor_active() ) {
+				/* translators: %s: minimum Elementor version */
+				return self::invalid( sprintf( __( 'Elementor %s or later is not active on this site.', self::TEXT_DOMAIN ), self::ELEMENTOR_MIN ) );
+			}
+			if ( 'trash' === get_post_status( $post_id ) ) {
+				return self::invalid( __( 'This item is in the trash. Restore it in WordPress first.', self::TEXT_DOMAIN ) );
+			}
+			$builder = self::get_builder( array( 'id' => $post_id ) );
+			if ( $builder && 'elementor' !== $builder['id'] ) {
+				/* translators: %s: page builder name */
+				return self::invalid( sprintf( __( 'This item is built with %s, not Elementor. Nothing was saved.', self::TEXT_DOMAIN ), $builder['name'] ) );
+			}
+			$locked = self::locked_by( $post_id );
+			if ( '' !== $locked ) {
+				/* translators: %s: user name */
+				return self::invalid( sprintf( __( '%s is editing this item in WordPress right now. Ask them to close the editor, then retry. Nothing was saved.', self::TEXT_DOMAIN ), $locked ) );
+			}
+			if ( ! self::elementor_editable( $post_id ) ) {
+				return self::invalid( __( 'Elementor does not allow this account to edit this item. Check Elementor > Settings > General > Post Types (and the Role Manager). Nothing was saved.', self::TEXT_DOMAIN ) );
+			}
+			$filtered = ! current_user_can( 'unfiltered_html' );
+			$ops      = array();
+			if ( isset( $change['elements'] ) ) {
+				if ( 'builder' !== get_post_meta( $post_id, '_elementor_edit_mode', true ) && empty( $change['convert'] ) ) {
+					/* translators: %s: parameter name */
+					return self::invalid( sprintf( __( '%s: this item is not built with Elementor yet. Send convert: true to switch it to Elementor; its current content is then replaced by the layout.', self::TEXT_DOMAIN ), $param ) );
+				}
+				$state    = array(
+					'count'    => 0,
+					'ids'      => array(),
+					'widgets'  => self::elementor_widget_types(),
+					'filtered' => $filtered,
+				);
+				$elements = self::check_elements( $change['elements'], null, 1, $state, $param . '.elements' );
+				if ( is_wp_error( $elements ) ) {
+					return $elements;
+				}
+				$json = wp_json_encode( $elements );
+				if ( ! is_string( $json ) || strlen( $json ) > self::ELEMENTOR_MAX_BYTES ) {
+					return self::invalid( sprintf( '%s.elements is larger than %d MB.', $param, self::ELEMENTOR_MAX_BYTES / 1048576 ) );
+				}
+				$ops['elements'] = $elements;
+			}
+			if ( isset( $change['page_settings'] ) ) {
+				$settings = self::check_page_settings( $post_id, $change['page_settings'], $param . '.page_settings' );
+				if ( is_wp_error( $settings ) ) {
+					return $settings;
+				}
+				$ops['page_settings'] = $filtered ? self::filter_settings( $settings ) : $settings;
+			}
+			return $ops;
+		}
+
+		/** Which element types may sit directly inside which. null is the top level. */
+		private static function child_allowed( $parent, $child ) {
+			if ( 'widget' === $parent ) {
+				return false;
+			}
+			if ( null === $parent ) {
+				return ! in_array( $child, array( 'widget', 'column' ), true );
+			}
+			if ( 'section' === $parent ) {
+				return 'column' === $child;
+			}
+			if ( 'column' === $parent ) {
+				return in_array( $child, array( 'widget', 'section' ), true );
+			}
+			return ! in_array( $child, array( 'column', 'section' ), true ); // Containers and newer element types.
+		}
+
+		/**
+		 * Check a list of elements recursively and return it cleaned: ids unique, element types nested the way Elementor
+		 * allows, widgets registered on the site, isInner set as Elementor expects, text filtered for accounts without
+		 * unfiltered_html. Keys the bridge does not know are kept as they are, so a layout read and written back stays intact.
+		 */
+		private static function check_elements( $elements, $parent, $depth, array &$state, $path, $in_inner = false ) {
+			if ( ! self::is_list( $elements ) ) {
+				return self::invalid( sprintf( '%s must be a list of elements.', $path ) );
+			}
+			if ( $depth > self::ELEMENTOR_MAX_DEPTH ) {
+				return self::invalid( sprintf( '%s is nested more than %d levels deep.', $path, self::ELEMENTOR_MAX_DEPTH ) );
+			}
+			$clean = array();
+			foreach ( $elements as $i => $element ) {
+				$where = $path . '[' . $i . ']';
+				if ( ! is_array( $element ) || ( $element && self::is_list( $element ) ) ) {
+					return self::invalid( sprintf( '%s must be an element object.', $where ) );
+				}
+				if ( ++$state['count'] > self::ELEMENTOR_MAX_ELEMENTS ) {
+					return self::invalid( sprintf( 'The layout has more than %d elements.', self::ELEMENTOR_MAX_ELEMENTS ) );
+				}
+				$id = isset( $element['id'] ) ? $element['id'] : null;
+				if ( ! is_string( $id ) || ! preg_match( '/^[A-Za-z0-9_-]{1,40}$/', $id ) ) {
+					return self::invalid( sprintf( '%s.id must be a short id of letters and digits, such as 3f2a9c1.', $where ) );
+				}
+				if ( isset( $state['ids'][ $id ] ) ) {
+					return self::invalid( sprintf( '%s.id "%s" is used twice; every element needs its own id.', $where, $id ) );
+				}
+				$state['ids'][ $id ] = true;
+				$type                = isset( $element['elType'] ) ? $element['elType'] : null;
+				if ( ! is_string( $type ) || ! preg_match( '/^[a-z][a-z0-9_-]{0,60}$/', $type ) ) {
+					return self::invalid( sprintf( '%s.elType must be section, column, container, widget or another Elementor element type.', $where ) );
+				}
+				if ( ! self::child_allowed( $parent, $type ) ) {
+					return self::invalid( sprintf( '%s: a %s cannot be placed %s.', $where, $type, null === $parent ? 'at the top level' : 'inside a ' . $parent ) );
+				}
+				if ( 'section' === $type && $in_inner ) {
+					return self::invalid( sprintf( '%s: Elementor allows inner sections only one level deep.', $where ) );
+				}
+				$settings = array_key_exists( 'settings', $element ) ? $element['settings'] : array();
+				if ( ! is_array( $settings ) || ( $settings && self::is_list( $settings ) ) ) {
+					return self::invalid( sprintf( '%s.settings must be an object.', $where ) );
+				}
+				if ( 'widget' === $type ) {
+					$widget = isset( $element['widgetType'] ) ? $element['widgetType'] : null;
+					if ( ! is_string( $widget ) || ! preg_match( '/^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/', $widget ) ) {
+						return self::invalid( sprintf( '%s.widgetType must name an Elementor widget, such as heading or text-editor.', $where ) );
+					}
+					if ( is_array( $state['widgets'] ) && ! in_array( $widget, $state['widgets'], true ) ) {
+						return self::invalid( sprintf( '%s: the widget "%s" is not registered on this site; Elementor would drop it.', $where, $widget ) );
+					}
+					if ( $state['filtered'] && 'html' === $widget ) {
+						return self::invalid( sprintf( '%s: this account may not post unfiltered HTML, so it cannot use the HTML widget.', $where ) );
+					}
+				}
+				$children = array_key_exists( 'elements', $element ) ? $element['elements'] : array();
+				if ( 'widget' === $type && ! empty( $children ) ) {
+					return self::invalid( sprintf( '%s: a widget cannot contain other elements.', $where ) );
+				}
+				$element['settings'] = $state['filtered'] ? self::filter_settings( $settings ) : $settings;
+				if ( in_array( $type, array( 'section', 'container' ), true ) ) {
+					$element['isInner'] = null !== $parent;
+				}
+				$inner = $in_inner || ( 'section' === $type && null !== $parent );
+				$kids  = self::check_elements( $children, $type, $depth + 1, $state, $where . '.elements', $inner );
+				if ( is_wp_error( $kids ) ) {
+					return $kids;
+				}
+				$element['elements'] = $kids;
+				$clean[]             = $element;
+			}
+			return $clean;
+		}
+
+		/** Text in settings, filtered like post content (for accounts without unfiltered_html). */
+		private static function filter_settings( $value ) {
+			if ( is_string( $value ) ) {
+				return wp_kses_post( $value );
+			}
+			if ( is_array( $value ) ) {
+				foreach ( $value as $key => $item ) {
+					$value[ $key ] = self::filter_settings( $item );
+				}
+			}
+			return $value;
+		}
+
+		/**
+		 * Page settings (the Elementor settings panel of the page). Post fields such as status and title are refused:
+		 * they change through the extension's own tools, with their own confirmations.
+		 *
+		 * @return array|WP_Error
+		 */
+		private static function check_page_settings( $post_id, $settings, $path ) {
+			if ( ! is_array( $settings ) || ( $settings && self::is_list( $settings ) ) ) {
+				return self::invalid( sprintf( '%s must be an object.', $path ) );
+			}
+			foreach ( $settings as $key => $value ) {
+				$key = (string) $key;
+				if ( 0 === strpos( $key, 'post_' ) || in_array( $key, array( 'menu_order', 'comment_status', 'ping_status' ), true ) ) {
+					return self::invalid( sprintf( '%s.%s cannot be changed here; the title, status, excerpt and featured image change through the post tools.', $path, $key ) );
+				}
+			}
+			if ( array_key_exists( 'template', $settings ) ) {
+				$allowed = array( '', 'default', 'elementor_canvas', 'elementor_header_footer', 'elementor_theme' );
+				if ( function_exists( 'wp_get_theme' ) ) {
+					$theme   = wp_get_theme();
+					$allowed = array_merge( $allowed, array_map( 'strval', array_keys( (array) $theme->get_page_templates( null, (string) get_post_type( $post_id ) ) ) ) );
+				}
+				if ( ! is_string( $settings['template'] ) || ! in_array( $settings['template'], $allowed, true ) ) {
+					return self::invalid( sprintf( '%s.template must be one of: %s.', $path, implode( ', ', array_filter( $allowed ) ) ) );
+				}
+			}
+			return $settings;
+		}
+
+		/** REST write after WordPress saved the post: Elementor's own save, so its CSS, version and revisions are handled. */
+		public static function update_elementor( $value, $post ) {
+			$post_id = is_object( $post ) && isset( $post->ID ) ? (int) $post->ID : 0;
+			if ( ! $post_id ) {
+				return true;
+			}
+			$change = self::sanitize_elementor( $value );
+			if ( null === $change || ( ! isset( $change['elements'] ) && ! isset( $change['page_settings'] ) ) ) {
+				return true;
+			}
+			if ( ! current_user_can( 'edit_post', $post_id ) ) {
+				return new WP_Error( 'rest_cannot_edit', __( 'Sorry, you are not allowed to edit the Elementor layout of this item.', self::TEXT_DOMAIN ), array( 'status' => rest_authorization_required_code() ) );
+			}
+			try {
+				$ops = self::plan_elementor( $post_id, $change, self::ELEMENTOR );
+				if ( is_wp_error( $ops ) ) {
+					return $ops;
+				}
+				$document = self::elementor_document( $post_id );
+				if ( ! $document || ! method_exists( $document, 'save' ) ) {
+					return new WP_Error( 'mkt_elementor_save_failed', __( 'Elementor could not open this item.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+				}
+				$data = array();
+				if ( isset( $ops['elements'] ) ) {
+					$data['elements'] = $ops['elements'];
+				}
+				if ( isset( $ops['page_settings'] ) ) {
+					$data['settings'] = $ops['page_settings'];
+				}
+				if ( false === $document->save( $data ) ) {
+					return new WP_Error( 'mkt_elementor_save_failed', __( 'Elementor did not save the layout.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+				}
+				if ( isset( $ops['elements'] ) && method_exists( $document, 'set_is_built_with_elementor' ) ) {
+					$document->set_is_built_with_elementor( true );
+				}
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_elementor_save_failed', __( 'The Elementor layout could not be saved.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+			return true;
+		}
+
+		/**
+		 * The display name of another user who has this post open in an editor right now (WordPress's post lock), or
+		 * ''. Same rule as wp_check_post_lock(), which is not loaded during REST requests.
+		 */
+		public static function locked_by( $post_id ) {
+			$lock = get_post_meta( $post_id, '_edit_lock', true );
+			if ( ! is_string( $lock ) || '' === $lock ) {
+				return '';
+			}
+			$parts  = explode( ':', $lock );
+			$time   = (int) $parts[0];
+			$user   = isset( $parts[1] ) ? (int) $parts[1] : (int) get_post_meta( $post_id, '_edit_last', true );
+			$window = (int) apply_filters( 'wp_check_post_lock_window', 150 );
+			if ( ! $user || (int) get_current_user_id() === $user || $time <= time() - $window ) {
+				return '';
+			}
+			$data = get_userdata( $user );
+			return $data && ! empty( $data->display_name ) ? (string) $data->display_name : __( 'Another user', self::TEXT_DOMAIN );
+		}
+
+		/* ---------- Changes waiting in the block editor ("editor queue") ---------- */
+
+		const REST_NS         = 'mkt-seo-bridge/v1';
+		const QUEUE_META      = '_mkt_editor_queue';
+		const QUEUE_MAX       = 20;
+		const QUEUE_MAX_BYTES = 2097152;
+		const QUEUE_KEEP_DAYS = 14;
+
+		/** REST routes for the queue. Called from register(). */
+		public static function register_queue_routes() {
+			$id = '(?P<id>\d+)';
+			register_rest_route(
+				self::REST_NS,
+				'/editor-queue/' . $id,
+				array(
+					array(
+						'methods'             => 'GET',
+						'callback'            => array( __CLASS__, 'queue_list' ),
+						'permission_callback' => array( __CLASS__, 'queue_permission' ),
+					),
+					array(
+						'methods'             => 'POST',
+						'callback'            => array( __CLASS__, 'queue_add' ),
+						'permission_callback' => array( __CLASS__, 'queue_permission' ),
+					),
+				)
+			);
+			register_rest_route(
+				self::REST_NS,
+				'/editor-queue/' . $id . '/(?P<item>[a-f0-9]{16})',
+				array(
+					'methods'             => 'POST',
+					'callback'            => array( __CLASS__, 'queue_set_status' ),
+					'permission_callback' => array( __CLASS__, 'queue_permission' ),
+				)
+			);
+		}
+
+		/** Only accounts that can edit the post, and only post types the bridge serves (no attachments, menus or templates). */
+		public static function queue_permission( $request ) {
+			$post_id = (int) $request->get_param( 'id' );
+			$type    = $post_id ? get_post_type( $post_id ) : false;
+			if ( ! $type || ! in_array( $type, self::post_types(), true ) ) {
+				return new WP_Error( 'rest_post_invalid_id', __( 'Invalid post ID.', self::TEXT_DOMAIN ), array( 'status' => 404 ) );
+			}
+			if ( ! current_user_can( 'edit_post', $post_id ) ) {
+				return new WP_Error( 'rest_cannot_edit', __( 'Sorry, you are not allowed to edit this item.', self::TEXT_DOMAIN ), array( 'status' => rest_authorization_required_code() ) );
+			}
+			return true;
+		}
+
+		/** Stored items, oldest first, without expired ones. */
+		private static function queue_items( $post_id ) {
+			$items = get_post_meta( $post_id, self::QUEUE_META, true );
+			$keep  = time() - self::QUEUE_KEEP_DAYS * 86400;
+			$out   = array();
+			foreach ( is_array( $items ) ? $items : array() as $item ) {
+				if ( is_array( $item ) && isset( $item['id'], $item['status'], $item['created'], $item['content'] ) && (int) $item['created'] >= $keep ) {
+					$out[] = $item;
+				}
+			}
+			return $out;
+		}
+
+		/** Save the list. When it is full, the oldest finished items go first; pending ones are never dropped here. */
+		private static function queue_save( $post_id, array $items ) {
+			while ( count( $items ) > self::QUEUE_MAX ) {
+				$drop = null;
+				foreach ( $items as $i => $item ) {
+					if ( 'pending' !== $item['status'] ) {
+						$drop = $i;
+						break;
+					}
+				}
+				if ( null === $drop ) {
+					break;
+				}
+				array_splice( $items, $drop, 1 );
+			}
+			// update_post_meta() unslashes what it is given, which would remove the backslashes block markup uses in its
+			// attributes (-…), so the list is slashed first. It returns false when nothing changed; that is a success too.
+			return false !== update_post_meta( $post_id, self::QUEUE_META, wp_slash( $items ) ) || get_post_meta( $post_id, self::QUEUE_META, true ) === $items;
+		}
+
+		/** One item as the REST API returns it. */
+		private static function queue_public( array $item, $with_content ) {
+			$content = (string) $item['content'];
+			$out     = array(
+				'id'                => (string) $item['id'],
+				'status'            => (string) $item['status'],
+				'label'             => isset( $item['label'] ) ? (string) $item['label'] : '',
+				'base_modified_gmt' => isset( $item['base_modified_gmt'] ) ? (string) $item['base_modified_gmt'] : '',
+				'summary'           => isset( $item['summary'] ) && is_array( $item['summary'] ) ? $item['summary'] : array(),
+				'created_gmt'       => gmdate( 'Y-m-d\TH:i:s', (int) $item['created'] ),
+				'updated_gmt'       => gmdate( 'Y-m-d\TH:i:s', (int) ( isset( $item['updated'] ) ? $item['updated'] : $item['created'] ) ),
+				'content_length'    => strlen( $content ),
+				'content_sha256'    => hash( 'sha256', $content ),
+			);
+			if ( $with_content ) {
+				$out['content'] = $content;
+			}
+			return $out;
+		}
+
+		public static function queue_list( $request ) {
+			try {
+				$post_id = (int) $request->get_param( 'id' );
+				$with    = in_array( (string) $request->get_param( 'content' ), array( '1', 'true' ), true );
+				$items   = array();
+				foreach ( self::queue_items( $post_id ) as $item ) {
+					$items[] = self::queue_public( $item, $with );
+				}
+				return array(
+					'version' => self::VERSION,
+					'post_id' => $post_id,
+					'items'   => $items,
+				);
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_queue_failed', __( 'The queued changes could not be read.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+		}
+
+		public static function queue_add( $request ) {
+			try {
+				$post_id = (int) $request->get_param( 'id' );
+				$content = $request->get_param( 'content' );
+				$base    = $request->get_param( 'base_modified_gmt' );
+				$label   = $request->get_param( 'label' );
+				$summary = $request->get_param( 'summary' );
+				if ( ! is_string( $content ) || '' === trim( $content ) ) {
+					return self::invalid( __( 'content must be the full new content of the item.', self::TEXT_DOMAIN ) );
+				}
+				if ( strlen( $content ) > self::QUEUE_MAX_BYTES ) {
+					return self::invalid( __( 'content is larger than 2 MB.', self::TEXT_DOMAIN ) );
+				}
+				if ( ! is_string( $base ) || ! preg_match( '/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$/', $base ) ) {
+					return self::invalid( __( 'base_modified_gmt must be the modified_gmt the change was prepared from, such as 2026-10-20T10:00:00.', self::TEXT_DOMAIN ) );
+				}
+				$items   = self::queue_items( $post_id );
+				$pending = 0;
+				foreach ( $items as $item ) {
+					$pending += 'pending' === $item['status'] ? 1 : 0;
+				}
+				if ( $pending >= self::QUEUE_MAX ) {
+					/* translators: %d: number of changes */
+					return self::invalid( sprintf( __( 'This item already has %d changes waiting in the editor. Apply or dismiss some first.', self::TEXT_DOMAIN ), $pending ) );
+				}
+				$lines = array();
+				foreach ( is_array( $summary ) ? array_slice( $summary, 0, 50 ) : array() as $line ) {
+					if ( is_array( $line ) ) {
+						$lines[] = array(
+							'before' => isset( $line['before'] ) && is_scalar( $line['before'] ) ? self::clip( (string) $line['before'], 300 ) : '',
+							'after'  => isset( $line['after'] ) && is_scalar( $line['after'] ) ? self::clip( (string) $line['after'], 300 ) : '',
+						);
+					}
+				}
+				$item    = array(
+					'id'                => bin2hex( random_bytes( 8 ) ),
+					'status'            => 'pending',
+					'label'             => self::clip( sanitize_text_field( is_string( $label ) ? $label : '' ), 200 ),
+					'content'           => self::clean_text( $content ),
+					'base_modified_gmt' => $base,
+					'summary'           => $lines,
+					'created'           => time(),
+					'created_by'        => (int) get_current_user_id(),
+				);
+				$items[] = $item;
+				if ( ! self::queue_save( $post_id, $items ) ) {
+					return new WP_Error( 'mkt_queue_failed', __( 'The change could not be queued.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+				}
+				return self::queue_public( $item, false );
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_queue_failed', __( 'The change could not be queued.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+		}
+
+		/** Mark one item applied (by the editor) or dismissed (by the editor or the extension). Finished items stay as they are. */
+		public static function queue_set_status( $request ) {
+			try {
+				$post_id = (int) $request->get_param( 'id' );
+				$id      = (string) $request->get_param( 'item' );
+				$status  = $request->get_param( 'status' );
+				if ( ! in_array( $status, array( 'applied', 'dismissed' ), true ) ) {
+					return self::invalid( __( 'status must be applied or dismissed.', self::TEXT_DOMAIN ) );
+				}
+				$items = self::queue_items( $post_id );
+				foreach ( $items as $i => $item ) {
+					if ( (string) $item['id'] !== $id ) {
+						continue;
+					}
+					if ( 'pending' === $item['status'] ) {
+						$items[ $i ]['status']     = $status;
+						$items[ $i ]['updated']    = time();
+						$items[ $i ]['updated_by'] = (int) get_current_user_id();
+						if ( ! self::queue_save( $post_id, $items ) ) {
+							return new WP_Error( 'mkt_queue_failed', __( 'The change could not be updated.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+						}
+					}
+					return self::queue_public( $items[ $i ], false );
+				}
+				return new WP_Error( 'mkt_queue_not_found', __( 'There is no such queued change on this item (it may have expired).', self::TEXT_DOMAIN ), array( 'status' => 404 ) );
+			} catch ( \Throwable $e ) {
+				return new WP_Error( 'mkt_queue_failed', __( 'The change could not be updated.', self::TEXT_DOMAIN ), array( 'status' => 500 ) );
+			}
+		}
+
+		private static function clip( $text, $max ) {
+			return function_exists( 'mb_substr' ) ? mb_substr( $text, 0, $max ) : substr( $text, 0, $max );
+		}
+
+		/** The block editor script that shows queued changes with Apply and Dismiss buttons. Post editor only. */
+		public static function enqueue_editor_queue() {
+			try {
+				$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+				if ( $screen && ( 'post' !== $screen->base || ! in_array( $screen->post_type, self::post_types(), true ) ) ) {
+					return;
+				}
+				if ( ! current_user_can( 'edit_posts' ) ) {
+					return;
+				}
+				wp_enqueue_script( 'mkt-editor-queue', plugins_url( 'assets/editor-queue.js', self::$file ), array( 'wp-api-fetch', 'wp-blocks', 'wp-data', 'wp-editor', 'wp-notices' ), self::VERSION, true );
+				wp_add_inline_script(
+					'mkt-editor-queue',
+					'window.mktEditorQueue = ' . wp_json_encode(
+						array(
+							'route'    => '/' . self::REST_NS . '/editor-queue/',
+							'interval' => 15000,
+						)
+					) . ';',
+					'before'
+				);
+			} catch ( \Throwable $e ) {
+				return; // Never break the editor.
+			}
+		}
+
 		/* ---------- Admin: Tools > MKT SEO Bridge status page ---------- */
 
 		public static function add_status_page() {
@@ -1387,7 +2071,17 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 			$rows     = array(
 				array( __( 'Bridge version', self::TEXT_DOMAIN ), self::VERSION, true ),
 				array( __( 'SEO plugin', self::TEXT_DOMAIN ), $plugin, (bool) $keys ),
-				array( __( 'REST fields', self::TEXT_DOMAIN ), self::FIELD . ', ' . self::FIELDS . ', ' . self::BUILDER . ' ' . __( 'on posts, pages, products, other public post types and their categories and tags', self::TEXT_DOMAIN ), true ),
+				array( __( 'REST fields', self::TEXT_DOMAIN ), self::FIELD . ', ' . self::FIELDS . ', ' . self::BUILDER . ', ' . self::ELEMENTOR . ' ' . __( 'on posts, pages, products, other public post types and their categories and tags', self::TEXT_DOMAIN ), true ),
+				array(
+					__( 'Elementor layouts', self::TEXT_DOMAIN ),
+					self::elementor_active()
+						/* translators: %s: Elementor version */
+						? sprintf( __( 'Elementor %s: layouts can be read and changed (saved through Elementor itself).', self::TEXT_DOMAIN ), (string) ELEMENTOR_VERSION )
+						/* translators: %s: minimum Elementor version */
+						: sprintf( __( 'Elementor %s or later is not active. Layouts cannot be changed.', self::TEXT_DOMAIN ), self::ELEMENTOR_MIN ),
+					self::elementor_active(),
+				),
+				array( __( 'Editor queue', self::TEXT_DOMAIN ), __( 'On. Changes prepared by the extension appear in the block editor with Apply and Dismiss buttons.', self::TEXT_DOMAIN ), true ),
 				array(
 					__( 'Custom fields', self::TEXT_DOMAIN ),
 					self::acf_active()
@@ -1408,7 +2102,7 @@ if ( ! class_exists( 'MKT_SEO_Bridge', false ) ) {
 					<img src="<?php echo esc_url( $icon ); ?>" width="48" height="48" alt="" style="border-radius:10px;" />
 					<?php esc_html_e( 'MKT Publisher SEO Bridge', self::TEXT_DOMAIN ); ?>
 				</h1>
-				<p><?php esc_html_e( 'Lets WP Publisher (for Claude and for ChatGPT) read and update SEO titles, meta descriptions, focus keywords and canonical URLs, and tells it which page builder owns a page so builder layouts are not overwritten. There is nothing to configure here.', self::TEXT_DOMAIN ); ?></p>
+				<p><?php esc_html_e( 'Lets WP Publisher (for Claude and for ChatGPT) read and update SEO titles, meta descriptions, focus keywords and canonical URLs, tells it which page builder owns a page so builder layouts are not overwritten, lets it change Elementor layouts through Elementor itself, and shows changes it prepares in the block editor for you to apply and save. There is nothing to configure here.', self::TEXT_DOMAIN ); ?></p>
 				<table class="widefat striped" style="max-width:820px;">
 					<tbody>
 					<?php foreach ( $rows as $row ) : ?>

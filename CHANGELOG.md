@@ -1,5 +1,51 @@
 # Changelog
 
+## MKT WP Publisher 1.9.0
+
+- **Read-only websites.** New setting *Website N | Read-only* (and `"read_only": true` for JSON profiles). On such a website every tool that is not read-only is refused before any request is made. `list_sites` shows `read_only: true`. Values other than true/false are refused with a message naming the website. The flag is not counted as "website details", so it never triggers the "all sections disabled" error for JSON users.
+- **Block types (no plugin needed).** New `list_block_types`, `get_block_type` and `check_blocks`, built on WordPress core's `/wp/v2/block-types`.
+  - `check_blocks` reports block types the site does not have, attribute types and allowed values, and `parent` / `ancestor` / `allowed_blocks` nesting rules. It warns about attributes that are read from HTML or not registered, and about static blocks written as self-closing comments.
+- **Elementor layouts** (needs SEO Bridge 1.5.0 and Elementor 3.0+). New `get_elementor_layout` (outline with element ids, types and visible text; optional widget list and full JSON) and `update_elementor_layout`.
+  - Targeted changes by element id: `settings` (merge, `null` removes), `replace_text`, `remove` and `insert`. Alternatively a whole new layout (missing ids are generated), plus `page_settings` (template and others).
+  - Checked before any write: title, modified date, other page builders, someone else's open editor, Elementor's own permission, `convert` for non-Elementor pages, ids, nesting, registered widgets, and post fields in page settings. The bridge checks again, then saves through Elementor.
+  - The result includes `restore.elements`.
+- **Changes for review in the block editor** (needs SEO Bridge 1.5.0). New `queue_editor_changes`, `list_editor_changes` and `cancel_editor_change`. A change is prepared from the saved content (block edits as in `edit_blocks`, or whole content) and shown in the block editor with Apply and Dismiss. The post is only saved when the person saves. `list_editor_changes` reports stale and saved changes.
+- `validate()` accepts free-form object arguments (Elementor page settings). Existing object arguments are checked exactly as before.
+- **Same features as WP Publisher for ChatGPT.** The tool code (`server/`) is now byte-for-byte the same as WP Publisher for ChatGPT's `core/`, so both offer the same tools; only `list_images` (a local folder) is Claude-only. From its 1.2.0 release this adds:
+  - `get_site_context`: theme, detected plugins, SEO Bridge, post types and access, in one read-only call. Lookups an account cannot make are skipped with a note.
+  - `get_brand_styles`: theme and Site Editor colours, gradients, fonts, sizes, spacing and layout widths, with how to use the preset slugs.
+  - `preview_edit` (writes nothing) and `stage_edit` (saves a WordPress autosave of a live post to preview in the editor; the live page does not change).
+  - **Page-builder refusal** on content changes (`update_draft`, `edit_published_post`, `edit_blocks`, `stage_edit`), exact with SEO Bridge 1.4.0's `mkt_builder`, with the explicit override `allow_page_builder`. On Elementor pages the message names the Elementor tools.
+  - **Content-loss guard**: a content change that keeps less than half of the text (200+ characters) or of the images and embeds (3+), or leaves an image without a source, is refused unless `allow_content_loss`.
+  - SEO fields through All in One SEO and SEOPress (with SEO Bridge 1.4.0). The "no SEO plugin" message now names them.
+  - `list_block_types` and `get_block_type` take their shape from the shared code: `list_block_types` adds a `category` filter and returns `count`; `get_block_type` needs the full name (`core/heading`) and returns `how_to_write`.
+- Ordinary edits send exactly the same requests as before; all earlier tests of the existing tools pass, three with updated wording or counts.
+- 38 tools (was 26).
+- Tests: Node tests for read-only, `check_blocks`, Elementor, the editor queue and the editor script (run against a stand-in `wp` in `node:vm`), plus WP Publisher for ChatGPT's feature tests run against this extension's dispatcher (`test/site-features.test.js`). 163 Node tests pass (1 live-site test skipped) and 32 PHP scenarios pass on Node 25.1.0 with PHP 8.5.11 and 8.1.34.
+- **Live test** on mktwptest.wasmer.app (WordPress with Twenty Twenty-Five, Elementor 4.3.5 with Pro widgets, SEO Bridge 1.5.0, Yoast SEO), with directmetalstructures.com connected read-only:
+  - Read-only: DMS showed `read_only: true` in `list_sites` and `access.mode: read_only` in `get_site_context`; `update_draft` there was refused with nothing sent.
+  - `get_site_context`, `get_brand_styles`, `list_block_types`, `get_block_type`; `check_blocks` passed valid markup and caught an orphan Column, a wrong attribute type and an unknown block.
+  - `preview_edit` showed a one-phrase change paragraph by paragraph; a shortened copy (15 of 330 characters) was flagged in the preview and refused by `update_draft`, with the draft unchanged.
+  - `stage_edit` saved an autosave of published post 1; its live title and modified date stayed the same. A draft was refused.
+  - Elementor: a draft page was refused without `convert`, then converted to a container with heading, text and button. A targeted `replace_text` plus an inserted divider was saved in one call. An unregistered widget, `post_status` in page settings, and `update_draft` content on the Elementor page were refused. `restore.elements` brought the earlier layout back.
+  - Editor queue: a change was queued on draft 64 (queueing on the Elementor page was refused). In the block editor the notice appeared, Apply changed the paragraph, and Save draft kept it. `list_editor_changes` then reported it as applied and `saved: true`, although the editor had reformatted the content.
+  - Fixed from the live test: the first Elementor save reported "stored differently" because the bridge adds `isInner` and the extension did not; the extension now sets `isInner` the same way (regression test added). `get_block_type` no longer calls blocks that keep HTML (such as Heading, now server-rendered) "usually self-closing".
+
+## SEO Bridge 1.5.0
+
+- New REST field `mkt_elementor` on every public post type. It is computed only for requests that ask for it (`?mkt_elementor=1`, or a write containing it).
+  - Reads the layout (`_elementor_data`, older array form too), page settings, template, whether the page is built with Elementor, whether Elementor lets this account edit it, the registered widget types, and who has the page open (post lock).
+  - Writes are checked first: ids, element nesting, inner sections one level deep, registered widgets, the HTML widget and text filtering for accounts without `unfiltered_html`, page settings without `post_*` fields, and known templates. The write is then saved through Elementor's `Document::save()`, so CSS, version and revisions are handled. Unknown element keys are kept as they are.
+  - Refused: another page builder, someone else in the editor, trash, and pages that are not built with Elementor unless `convert` is sent.
+- New editor queue (REST namespace `mkt-seo-bridge/v1`, `GET`/`POST /editor-queue/{id}` and `POST /editor-queue/{id}/{item}`).
+  - Only accounts that can edit the post, and only public REST post types.
+  - Limits: content up to 2 MB, at most 20 pending per post, and items expire after 14 days. Content is filtered for accounts without `unfiltered_html`. The list is stored with `wp_slash()`, so backslashes in block attributes survive.
+- New block editor script `assets/editor-queue.js` (no build step). It checks the queue every 15 seconds while the tab is visible and shows each pending change with Apply and Dismiss.
+  - It never applies over unsaved edits, or to a newer version of the post than the change was prepared from.
+  - It loads only in the post editor, for accounts that can edit posts.
+- The status page shows Elementor and editor queue status.
+- PHP harness: `update_post_meta` and `wp_slash` stand-ins now handle arrays the way WordPress does. New scenarios: `elementor-read`, `elementor-write`, `elementor-refusals`, `elementor-not-active`, `editor-queue`, `editor-queue-script`.
+
 ## MKT WP Publisher 1.8.0
 
 - New **`inspect_fields`**: lists the custom fields of a post, page, product, category or tag. That covers every Advanced Custom Fields field shown on it (type, value, sub fields, flexible content layouts, choices) and the meta keys the site lists as editable. A flat `paths` list gives the path of every value.

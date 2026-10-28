@@ -3,7 +3,7 @@ Contributors: jayant
 Tags: seo, yoast, rank math, aioseo, seopress
 Requires at least: 5.6
 Requires PHP: 7.4
-Stable tag: 1.4.0
+Stable tag: 1.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,6 +18,8 @@ Yoast SEO and Rank Math keep their SEO fields out of the WordPress REST API, so 
 * read them back for review.
 
 From version 1.3.0 it also adds a REST field, `mkt_fields`, so the extension can read and change **custom fields**. These are the Advanced Custom Fields shown on a post, page, product or category, including single rows inside repeaters and flexible content. Each value is checked against the field settings before it is saved. The field is only computed for requests that ask for it, so the editor and other plugins are not slowed down.
+
+From version 1.5.0 it adds `mkt_elementor`, so the extension can read and change **Elementor layouts** (saved through Elementor itself), and an **editor queue**: changes the extension prepares appear in the block editor with Apply and Dismiss buttons and are saved only when you save.
 
 A status page under **Tools → MKT SEO Bridge** shows the detected SEO plugin, Advanced Custom Fields, and the fields the extension can update. Its only setting is an optional list of meta keys, for custom fields that are not made with Advanced Custom Fields.
 
@@ -58,6 +60,12 @@ For existing posts the bridge saves the SEO values just before WordPress saves t
 The extension can no longer change SEO fields; anything already saved stays in Yoast SEO or Rank Math as normal.
 
 == Changelog ==
+
+= 1.5.0 =
+* New: Elementor layouts (Elementor 3.0+). The `mkt_elementor` REST field reads a page's layout and saves changes through Elementor's own save, so Elementor regenerates its CSS and keeps a revision. Every change is checked first: widgets must be registered on the site and nested the way Elementor allows, pages built with another builder or open in someone else's editor are refused, and a page is switched to Elementor only when asked.
+* New: changes for review in the block editor. WP Publisher can leave a proposed change; whoever opens the post in the block editor sees it with Apply and Dismiss buttons. Nothing is saved until they click Save or Update.
+* Only computed for requests that ask for it; the editor script loads only in the post editor.
+* Older WP Publisher versions keep working with this version unchanged.
 
 = 1.4.0 =
 * New: All in One SEO (posts, pages and other post types; its category and tag SEO is a Pro feature and is not written) and SEOPress (posts and terms). Yoast SEO, then Rank Math, then All in One SEO, then SEOPress is used when more than one is active, so existing sites behave exactly as before.

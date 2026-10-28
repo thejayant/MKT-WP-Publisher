@@ -4,6 +4,8 @@
 
 const {markdownToHtml} = require('../markdown.js');
 const {outline, applyChanges} = require('../blocks.js');
+const {detectBuilder, requireNotBuilder} = require('../builders.js');
+const {contentChange, contentLoss, requireNoContentLoss} = require('../content.js');
 const {raw, paged, checkText} = require('../util.js');
 
 const ALL_STATUSES = 'draft,pending,future,publish,private';
@@ -119,7 +121,7 @@ async function requireSeoPlugin(ctx, route, seo, what = 'posts and pages') {
     if (!plugin) {
       throw new Error('SEO fields for ' + what + ' need the MKT Publisher SEO Bridge plugin on site ' + ctx.site.site_id + (what === 'posts and pages' ? '' : ' (version 1.2.0 or later)') + '. Install or update it in WordPress (Plugins > Add New > Upload), then retry. Nothing was saved.');
     }
-    if (plugin === 'none') throw new Error('Site ' + ctx.site.site_id + ' has the SEO Bridge plugin but neither Yoast SEO nor Rank Math is active. Nothing was saved.');
+    if (plugin === 'none') throw new Error('Site ' + ctx.site.site_id + ' has the SEO Bridge plugin but no supported SEO plugin is active for ' + what + ' (Yoast SEO or Rank Math; All in One SEO and SEOPress need SEO Bridge 1.4.0 or later, and All in One SEO covers posts and pages only). Nothing was saved.');
     bridge = {plugin, version: props.version?.enum?.[0] || '1.0.0', fields: new Set([...BASE_SEO_FIELDS, ...Object.keys(props)])};
     ctx.state.seoPlugins.set(key, bridge);
   }
@@ -166,7 +168,7 @@ function mapFields(pc, args, body) {
  */
 async function prepareWrite(ctx, args, pc) {
   checkText(args);
-  const {site_id, post_id, post_type, confirm_title, confirm_publish, confirm_schedule, confirm_edit, confirm_unpublish, publish_at, publish_date, content_format, seo, expected_modified_gmt, changes, ...body} = args;
+  const {site_id, post_id, post_type, confirm_title, confirm_publish, confirm_schedule, confirm_edit, confirm_unpublish, publish_at, publish_date, content_format, seo, expected_modified_gmt, changes, allow_page_builder, allow_content_loss, ...body} = args;
   mapFields(pc, args, body);
   if (content_format !== undefined && body.content === undefined) throw new Error('content_format needs content.');
   if (content_format === 'markdown') body.content = markdownToHtml(body.content);
@@ -236,6 +238,10 @@ async function updateExisting(ctx, args, {statuses, toolName, live}) {
     throw new Error(toolName + ' works on ' + statuses.join('/') + ' ' + pc.kind + 's only; this one is ' + current.status + '.' + hint);
   }
   if (live) requireTitle(ctx, args, pc, current);
+  if (body.content !== undefined) {
+    requireNotBuilder(ctx, current, pc.kind, {wholeContent: true, allow: args.allow_page_builder === true});
+    requireNoContentLoss(ctx, pc.kind, args.post_id, current.content?.raw, body.content, args.allow_content_loss === true);
+  }
   if (body.slug !== undefined && body.slug !== current.slug) await requireFreeSlug(ctx, pc, body.slug, current.id);
   const out = written(await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body}));
   const warnings = [out.warning];
@@ -259,6 +265,88 @@ function rawContent(ctx, pc, post) {
     throw new Error('WordPress did not return the stored content of ' + pc.kind + ' ' + post?.id + ' on site ' + ctx.site.site_id + '. The connected account needs permission to edit it.');
   }
   return content;
+}
+
+const sameValue = (a, b) => {
+  const plain = v => (Array.isArray(v) ? [...v].sort((x, y) => x - y) : v ?? null);
+  return JSON.stringify(plain(a)) === JSON.stringify(plain(b));
+};
+
+/**
+ * Work out what an edit would change, without writing anything: field by field, and for content the text, media and
+ * paragraphs before and after. args are those of update_draft / edit_published_post (fields) or edit_blocks (changes).
+ * Shared by preview_edit and stage_edit.
+ */
+async function proposeEdit(ctx, args, pc) {
+  const blockMode = args.changes !== undefined;
+  const {body} = await prepareWrite(ctx, args, pc);
+  if (args.publish_date !== undefined) body.date_gmt = pastDateGmt(args.publish_date);
+  if (blockMode && Object.keys(body).length) throw new Error('Pass either changes (block edits, as for edit_blocks) or fields to change (as for update_draft and edit_published_post), not both.');
+  if (!blockMode && !Object.keys(body).length) throw new Error('Pass the fields to change (title, content, slug, excerpt, categories, tags, featured_media, author, parent, seo, publish_date), or changes as for edit_blocks.');
+  const current = await readCurrent(ctx, args, pc);
+  if (!EDITABLE_STATUSES.includes(current.status)) throw new Error('Only draft, pending, scheduled, published or private ' + pc.kind + 's can be edited; this one is ' + current.status + '.');
+  const live = ['publish', 'private'].includes(current.status);
+  const warnings = [];
+
+  let before;
+  let after;
+  let blockChanges;
+  if (blockMode) {
+    before = rawContent(ctx, pc, current);
+    const applied = applyChanges(before, args.changes);
+    if (applied.content === before) throw new Error('The changes leave the content exactly as it is.');
+    ({content: after, diff: blockChanges} = applied);
+  } else if (body.content !== undefined) {
+    before = rawContent(ctx, pc, current);
+    after = body.content;
+  }
+
+  const fields = [];
+  for (const [key, value] of Object.entries(body)) {
+    if (key === 'content') continue;
+    if (key === 'mkt_seo') {
+      for (const [field, text] of Object.entries(value)) {
+        if (!sameValue(current.mkt_seo?.[field], text)) fields.push({field: 'seo.' + field, before: current.mkt_seo?.[field] ?? null, after: text});
+      }
+      continue;
+    }
+    const name = key === 'date_gmt' ? 'publish_date (GMT)' : key;
+    const was = ['title', 'excerpt'].includes(key) ? raw(current[key]) : current[key];
+    if (!sameValue(was, value)) fields.push({field: name, before: was ?? null, after: value});
+  }
+
+  const loss = after !== undefined ? contentLoss(before, after) : null;
+  if (loss) warnings.push('This change looks like content was lost (' + loss.text_chars_after + ' of ' + loss.text_chars_before + ' text characters and ' + loss.media_after + ' of ' + loss.media_before + ' media kept' + (loss.reasons.includes('empty_media') ? ', and images or embeds without a source' : '') + '). Applying it will be refused unless the user explicitly wants that (allow_content_loss: true); if not intended, send the complete content.');
+  const builder = detectBuilder(current);
+  if (builder && after !== undefined && (builder.storage === 'meta' || !blockMode)) {
+    warnings.push('This ' + pc.kind + ' is built with ' + builder.name + '. Applying this content change will be refused unless the user explicitly wants it anyway (allow_page_builder: true); ' + (builder.storage === 'meta' ? 'it would not change the page.' : 'it would remove the builder layout. Use edit_blocks with replace_text for text changes.'));
+  }
+  if (live && body.slug !== undefined && body.slug !== current.slug) warnings.push('Changing the slug changes the public URL; old links may break unless the site redirects them.');
+  if (!live && body.date_gmt !== undefined) warnings.push('publish_date applies to published ' + pc.kind + 's. To publish this one with a date, use publish_post with publish_date.');
+  if (!fields.length && after === undefined) warnings.push('Every value given is already the current one; applying this changes nothing.');
+
+  const tool = blockMode ? 'edit_blocks' : live ? 'edit_published_post' : 'update_draft';
+  return {
+    current,
+    body,
+    after,
+    report: {
+      ...pc.summarize(current),
+      title: raw(current.title),
+      live,
+      modified_gmt: current.modified_gmt,
+      fields,
+      ...(after !== undefined ? {content: {...contentChange(before, after), ...(blockChanges ? {block_changes: blockChanges} : {})}} : {}),
+      ...(loss ? {content_loss: loss} : {}),
+      ...(builder ? {page_builder: builder} : {}),
+      ...(warnings.length ? {warning: warnings.join(' ')} : {}),
+      apply_with: {
+        tool,
+        expected_modified_gmt: current.modified_gmt,
+        note: (tool === 'update_draft' ? 'Nothing is public yet; ' : 'Changes go live immediately, so apply only after the user approves this preview; pass confirm_title (the current title) and confirm_edit, and ') + 'pass expected_modified_gmt so the change is refused if the ' + pc.kind + ' is edited in WordPress in the meantime.',
+      },
+    },
+  };
 }
 
 module.exports = {
@@ -289,7 +377,9 @@ module.exports = {
     const p = await ctx.request(pc.route + '/' + args.post_id + '?context=edit');
     if (args.full) return ctx.result(p);
     const hasExcerpt = pc.custom ? pc.props.has('excerpt') : !pc.isPage;
+    const builder = detectBuilder(p);
     return ctx.result({
+      ...(builder ? {page_builder: builder} : {}),
       ...pc.summarize(p),
       title: raw(p.title),
       ...(hasExcerpt ? {excerpt: raw(p.excerpt)} : {}),
@@ -319,7 +409,9 @@ module.exports = {
     const pc = await postContext(ctx, args);
     const p = await ctx.request(pc.route + '/' + args.post_id + '?context=edit');
     const content = rawContent(ctx, pc, p);
+    const builder = detectBuilder(p);
     return ctx.result({
+      ...(builder ? {page_builder: builder} : {}),
       post_id: p.id,
       ...(p.type ? {post_type: p.type} : {}),
       status: p.status,
@@ -337,9 +429,11 @@ module.exports = {
     const current = await readCurrent(ctx, args, pc);
     requireTitle(ctx, args, pc, current);
     if (!EDITABLE_STATUSES.includes(current.status)) throw new Error('edit_blocks works on draft, pending, scheduled, published or private ' + pc.kind + 's; this one is ' + current.status + '.');
+    requireNotBuilder(ctx, current, pc.kind, {wholeContent: false, allow: args.allow_page_builder === true});
     const before = rawContent(ctx, pc, current);
     const {content, diff, edits} = applyChanges(before, args.changes);
     if (content === before) throw new Error('The changes leave the content exactly as it is. Nothing was saved.');
+    requireNoContentLoss(ctx, pc.kind, args.post_id, before, content, args.allow_content_loss === true);
     const saved = await ctx.request(pc.route + '/' + args.post_id, {method: 'POST', body: {content}});
     const warnings = [];
     if (typeof saved?.content?.raw === 'string' && saved.content.raw !== content) {
@@ -353,6 +447,44 @@ module.exports = {
       live: current.status === 'publish',
       undo: 'WordPress keeps the previous version in Revisions (open the ' + pc.kind + ' in the editor > Revisions) for post types with revisions.',
       ...(warnings.length ? {warning: warnings.join(' ')} : {}),
+    });
+  },
+
+  /** Show what an edit would change, field by field and paragraph by paragraph. Writes nothing. */
+  async preview_edit(ctx, args) {
+    const pc = await postContext(ctx, args);
+    const {report} = await proposeEdit(ctx, args, pc);
+    return ctx.result(report);
+  },
+
+  /**
+   * Save a proposed edit of a live post as a WordPress autosave, so the user can review it in the editor before it
+   * is applied. The live page does not change.
+   */
+  async stage_edit(ctx, args) {
+    const pc = await postContext(ctx, args);
+    const {current, body, after, report} = await proposeEdit(ctx, args, pc);
+    if (!['publish', 'private'].includes(current.status)) {
+      throw new Error('stage_edit is for published or private ' + pc.kind + 's; this one is ' + current.status + ' and nothing in it is public. Change it with update_draft and review it at its preview_url.');
+    }
+    const other = Object.keys(body).filter(key => !['title', 'content', 'excerpt'].includes(key));
+    if (other.length) throw new Error('A WordPress autosave holds only the title, content and excerpt, not ' + other.join(', ') + '. Show those with preview_edit instead. Nothing was saved.');
+    if (after !== undefined) {
+      requireNotBuilder(ctx, current, pc.kind, {wholeContent: args.changes === undefined, allow: args.allow_page_builder === true});
+      requireNoContentLoss(ctx, pc.kind, args.post_id, rawContent(ctx, pc, current), after, args.allow_content_loss === true);
+    }
+    // An autosave stores whatever it is given, so send the current values of the fields that do not change.
+    const autosave = {title: body.title ?? raw(current.title), content: after ?? rawContent(ctx, pc, current)};
+    const excerpt = body.excerpt ?? raw(current.excerpt);
+    if (typeof excerpt === 'string') autosave.excerpt = excerpt;
+    const saved = await ctx.request(pc.route + '/' + args.post_id + '/autosaves', {method: 'POST', body: autosave});
+    return ctx.result({
+      ...report,
+      autosave_id: saved?.id,
+      review: {
+        editor_url: ctx.site.site_url + '/wp-admin/post.php?post=' + current.id + '&action=edit',
+        steps: 'Open editor_url signed in to WordPress as the same user this website is connected with. The editor says there is an autosave more recent than the published version: choose "View the autosave" to load it, then Preview. The live page has not changed. After the user approves, apply it with ' + report.apply_with.tool + ' (or click Update in the editor). To discard it, ignore it; WordPress replaces it on the next save.',
+      },
     });
   },
 

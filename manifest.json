@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mkt-wp-publisher",
   "display_name": "MKT WP Publisher",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Publish to up to 5 WordPress websites using separate website settings and blog image folders. Developed by Jayant.",
   "author": {
     "name": "Jayant"
@@ -27,30 +27,35 @@
         "WP_SITE_1_USERNAME": "${user_config.website_1_username}",
         "WP_SITE_1_APP_PASSWORD": "${user_config.website_1_application_password}",
         "WP_SITE_1_IMAGE_DIR": "${user_config.website_1_image_folder}",
+        "WP_SITE_1_READ_ONLY": "${user_config.website_1_read_only}",
         "WP_SITE_2_ENABLED": "${user_config.website_2_enabled}",
         "WP_SITE_2_LABEL": "${user_config.website_2_label}",
         "WP_SITE_2_URL": "${user_config.website_2_url}",
         "WP_SITE_2_USERNAME": "${user_config.website_2_username}",
         "WP_SITE_2_APP_PASSWORD": "${user_config.website_2_application_password}",
         "WP_SITE_2_IMAGE_DIR": "${user_config.website_2_image_folder}",
+        "WP_SITE_2_READ_ONLY": "${user_config.website_2_read_only}",
         "WP_SITE_3_ENABLED": "${user_config.website_3_enabled}",
         "WP_SITE_3_LABEL": "${user_config.website_3_label}",
         "WP_SITE_3_URL": "${user_config.website_3_url}",
         "WP_SITE_3_USERNAME": "${user_config.website_3_username}",
         "WP_SITE_3_APP_PASSWORD": "${user_config.website_3_application_password}",
         "WP_SITE_3_IMAGE_DIR": "${user_config.website_3_image_folder}",
+        "WP_SITE_3_READ_ONLY": "${user_config.website_3_read_only}",
         "WP_SITE_4_ENABLED": "${user_config.website_4_enabled}",
         "WP_SITE_4_LABEL": "${user_config.website_4_label}",
         "WP_SITE_4_URL": "${user_config.website_4_url}",
         "WP_SITE_4_USERNAME": "${user_config.website_4_username}",
         "WP_SITE_4_APP_PASSWORD": "${user_config.website_4_application_password}",
         "WP_SITE_4_IMAGE_DIR": "${user_config.website_4_image_folder}",
+        "WP_SITE_4_READ_ONLY": "${user_config.website_4_read_only}",
         "WP_SITE_5_ENABLED": "${user_config.website_5_enabled}",
         "WP_SITE_5_LABEL": "${user_config.website_5_label}",
         "WP_SITE_5_URL": "${user_config.website_5_url}",
         "WP_SITE_5_USERNAME": "${user_config.website_5_username}",
         "WP_SITE_5_APP_PASSWORD": "${user_config.website_5_application_password}",
         "WP_SITE_5_IMAGE_DIR": "${user_config.website_5_image_folder}",
+        "WP_SITE_5_READ_ONLY": "${user_config.website_5_read_only}",
         "MKT_WP_DEBUG": "${user_config.debug_log}"
       }
     }
@@ -108,6 +113,13 @@
       "description": "Select this website's local blog image folder. Required when this website is enabled.",
       "required": false
     },
+    "website_1_read_only": {
+      "type": "boolean",
+      "title": "Website 1 | Read-only",
+      "description": "Only reading tools work on this website (for audits). Every tool that would change anything is refused before it reaches WordPress.",
+      "required": false,
+      "default": false
+    },
     "website_2_enabled": {
       "type": "boolean",
       "title": "Enable website 2",
@@ -149,6 +161,13 @@
       "title": "Website 2 | Blog image folder",
       "description": "Select this website's local blog image folder. Required when this website is enabled.",
       "required": false
+    },
+    "website_2_read_only": {
+      "type": "boolean",
+      "title": "Website 2 | Read-only",
+      "description": "Only reading tools work on this website (for audits). Every tool that would change anything is refused before it reaches WordPress.",
+      "required": false,
+      "default": false
     },
     "website_3_enabled": {
       "type": "boolean",
@@ -192,6 +211,13 @@
       "description": "Select this website's local blog image folder. Required when this website is enabled.",
       "required": false
     },
+    "website_3_read_only": {
+      "type": "boolean",
+      "title": "Website 3 | Read-only",
+      "description": "Only reading tools work on this website (for audits). Every tool that would change anything is refused before it reaches WordPress.",
+      "required": false,
+      "default": false
+    },
     "website_4_enabled": {
       "type": "boolean",
       "title": "Enable website 4",
@@ -234,6 +260,13 @@
       "description": "Select this website's local blog image folder. Required when this website is enabled.",
       "required": false
     },
+    "website_4_read_only": {
+      "type": "boolean",
+      "title": "Website 4 | Read-only",
+      "description": "Only reading tools work on this website (for audits). Every tool that would change anything is refused before it reaches WordPress.",
+      "required": false,
+      "default": false
+    },
     "website_5_enabled": {
       "type": "boolean",
       "title": "Enable website 5",
@@ -275,6 +308,13 @@
       "title": "Website 5 | Blog image folder",
       "description": "Select this website's local blog image folder. Required when this website is enabled.",
       "required": false
+    },
+    "website_5_read_only": {
+      "type": "boolean",
+      "title": "Website 5 | Read-only",
+      "description": "Only reading tools work on this website (for audits). Every tool that would change anything is refused before it reaches WordPress.",
+      "required": false,
+      "default": false
     },
     "sites_json": {
       "type": "string",
@@ -330,6 +370,14 @@
       "description": "Check authentication and post/media capabilities."
     },
     {
+      "name": "get_site_context",
+      "description": "Read a website's setup first: theme, plugins, SEO plugin, page builders, post types and access."
+    },
+    {
+      "name": "get_brand_styles",
+      "description": "Read the theme's brand colours, fonts, sizes and spacing (Site Editor changes included)."
+    },
+    {
       "name": "list_categories",
       "description": "Read existing categories, with paging."
     },
@@ -356,6 +404,18 @@
     {
       "name": "list_blocks",
       "description": "List the blocks of a post, page or product with their text and ACF fields."
+    },
+    {
+      "name": "list_block_types",
+      "description": "List the block types the website has (core, theme and plugin blocks)."
+    },
+    {
+      "name": "get_block_type",
+      "description": "Read a block type: attributes, allowed values and nesting rules."
+    },
+    {
+      "name": "check_blocks",
+      "description": "Check block markup against the website's registered blocks before saving."
     },
     {
       "name": "upload_image",
@@ -394,12 +454,40 @@
       "description": "Block-safe edit: change text in one block or an ACF block field; the title must be confirmed."
     },
     {
+      "name": "preview_edit",
+      "description": "Preview an edit field by field before applying it; writes nothing."
+    },
+    {
+      "name": "stage_edit",
+      "description": "Save a proposed change to a live post as a WordPress autosave for review; the live page does not change."
+    },
+    {
       "name": "inspect_fields",
       "description": "List the custom fields (ACF and listed meta keys) of a post, page, product or category, with paths for update_fields."
     },
     {
       "name": "update_fields",
       "description": "Change custom fields by path (one repeater or flexible content row at a time); the title must be confirmed."
+    },
+    {
+      "name": "get_elementor_layout",
+      "description": "Read an Elementor page layout as an outline of sections, containers and widgets."
+    },
+    {
+      "name": "update_elementor_layout",
+      "description": "Change an Elementor layout (targeted or whole), saved through Elementor; the title must be confirmed."
+    },
+    {
+      "name": "queue_editor_changes",
+      "description": "Prepare a change for review and saving in the WordPress block editor (Apply / Dismiss)."
+    },
+    {
+      "name": "list_editor_changes",
+      "description": "List changes waiting in the block editor and whether they were applied and saved."
+    },
+    {
+      "name": "cancel_editor_change",
+      "description": "Withdraw a change waiting in the block editor."
     },
     {
       "name": "publish_post",

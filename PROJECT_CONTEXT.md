@@ -2,7 +2,7 @@
 
 This file gives a developer (or an AI assistant) what they need to work on this codebase. For end-user setup, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
-_Last reviewed: 2026-10-20 · version 1.6.0_
+_Last reviewed: 2026-10-29 · version 1.9.0 (SEO Bridge 1.5.0)_
 
 ## What it is
 
@@ -34,7 +34,7 @@ list_sites → test_connection → list_authors / list_categories / list_tags / 
 | `manifest.json` | MCPB manifest (v0.3): settings UI (`user_config`), env-var wiring, tool list, icons, compatibility. |
 | `server/` | The MCP server. `service.js` is the entry module (`makeService`, `start`); `schema.js` defines tools and validation; `config.js` reads settings; `wp-client.js` is the HTTP client; `rpc.js` is the stdio loop; `tools/*.js` hold the handlers; `markdown.js` converts Markdown. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). |
 | `wordpress-plugin/mkt-wp-publisher-seo-bridge/` | Companion WordPress plugin "MKT Publisher SEO Bridge for Yoast & Rank Math" (PHP, v1.1.0, with `assets/` icons and `readme.txt`). Exposes Yoast/Rank Math SEO fields as the REST field `mkt_seo`, plus a Tools status page. Installed on each site, not part of the `.mcpb`. |
-| `test/*.test.js` | `node:test` suites by area (64 tests) with a mocked `fetch`; `rpc.test.js` also spawns the server. `test/helpers.js` has the fixtures. |
+| `test/*.test.js` | `node:test` suites by area (164 tests) with a mocked `fetch`; `rpc.test.js` also spawns the server. `test/helpers.js` has the fixtures. |
 | `test/live/wordpress.live.js` | Opt-in test against a real staging site (`npm run test:live`). |
 | `scripts/` | `test.js` (test runner), `lint.js`, `pack.js` (release build), `zip.js` (dependency-free zip writer). |
 | `.github/workflows/ci.yml` | CI: Node 18/20/22 × Linux/Windows/macOS, plus PHP lint. |
@@ -69,12 +69,16 @@ list_sites → test_connection → list_authors / list_categories / list_tags / 
 11. A write with `seo` checks the SEO Bridge and an active SEO plugin (OPTIONS) **before** writing anything.
 12. Only tools that change public content carry `destructiveHint`: `publish_post`, `schedule_post`, `edit_published_post`, `unpublish_post` (tested).
 13. Multi-step writes check everything they can **before** the first write (e.g. the featured-image target before uploading).
+14. On a `read_only` website, every tool without `readOnlyHint` is refused in `service.js` before any request (tested for every writing tool). New tools must set `readOnly` correctly.
+15. Elementor layouts are only written through the bridge, which saves through Elementor's `Document::save()`; never write `_elementor_data` directly. A page not built with Elementor is converted only with `convert: true`; pages of other builders and pages open in someone else's editor are refused.
+16. `server/` (all but `index.js`, `service.js`, `rpc.js`, `https-fetch.js`) is byte-identical to `core/` in WP Publisher for ChatGPT (`D:\Jayant\AI_Jayant\WP Publisher for ChatGPT`). Every feature goes into both repositories; copy the changed files across and check with `cmp`.
+17. `queue_editor_changes` and `cancel_editor_change` never write the post itself, only the bridge's editor queue. The editor script applies a change only to an editor with no unsaved edits and the same `modified_gmt` the change was prepared from.
 
 ## Conventions
 
 - Readable style: one statement per line, 2-space indent, single quotes, `'use strict'`, short JSDoc on exported functions. `npm run lint` rejects tabs and trailing whitespace. Some older test bodies are still compact; new tests use the readable style.
 - Errors are plain `Error`s with user-facing, actionable messages. They are returned to the client as `isError: true` tool results, not JSON-RPC errors. Name the site, and never echo secrets.
-- When you add a tool, follow [docs/DEVELOPMENT.md#adding-a-tool](docs/DEVELOPMENT.md#adding-a-tool). The `tools.length` assertion is currently 16.
+- When you add a tool, follow [docs/DEVELOPMENT.md#adding-a-tool](docs/DEVELOPMENT.md#adding-a-tool). The `tools.length` assertion is currently 38.
 - When you bump the version: `server/constants.js`, `manifest.json`, `package.json`, the README / User Guide headings, `CHANGELOG.md`.
 - Commit messages: a short summary line, a body, and the co-author trailer used in the history.
 

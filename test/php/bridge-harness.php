@@ -180,15 +180,19 @@ function update_post_meta( $id, $key, $value ) {
 	if ( ! empty( $GLOBALS['wp']['meta_throws'] ) ) {
 		throw new RuntimeException( 'database gone' );
 	}
-	$GLOBALS['wp']['meta'][ $id ][ $key ] = stripslashes( $value );
+	// Like WordPress: values are unslashed (arrays deeply) before they are stored.
+	$GLOBALS['wp']['meta'][ $id ][ $key ] = harness_unslash( $value );
 	return true;
+}
+function harness_unslash( $value ) {
+	return is_array( $value ) ? array_map( 'harness_unslash', $value ) : ( is_string( $value ) ? stripslashes( $value ) : $value );
 }
 function delete_post_meta( $id, $key ) {
 	unset( $GLOBALS['wp']['meta'][ $id ][ $key ] );
 	return true;
 }
 function wp_slash( $value ) {
-	return addslashes( $value );
+	return is_array( $value ) ? array_map( 'wp_slash', $value ) : ( is_string( $value ) ? addslashes( $value ) : $value );
 }
 function sanitize_text_field( $text ) {
 	return trim( preg_replace( '/[\r\n\t ]+/', ' ', strip_tags( (string) $text ) ) );
@@ -240,6 +244,36 @@ function number_format_i18n( $n ) {
 	return number_format( $n );
 }
 function wp_is_application_passwords_available() {
+	return true;
+}
+function register_rest_route( $namespace, $route, $args ) {
+	$GLOBALS['wp']['routes'][ $namespace . $route ] = $args;
+	return true;
+}
+function get_post_status( $id ) {
+	return $GLOBALS['wp']['status_of'][ $id ] ?? 'draft';
+}
+function get_current_user_id() {
+	return $GLOBALS['wp']['user_id'] ?? 1;
+}
+function get_userdata( $id ) {
+	return isset( $GLOBALS['wp']['users'][ $id ] ) ? (object) array( 'display_name' => $GLOBALS['wp']['users'][ $id ] ) : false;
+}
+function wp_get_theme() {
+	return new class() {
+		public function get_page_templates( $post = null, $post_type = 'page' ) {
+			return array( 'templates/landing.php' => 'Landing' );
+		}
+	};
+}
+function get_current_screen() {
+	return $GLOBALS['wp']['screen'] ?? null;
+}
+function wp_enqueue_script( $handle, $src = '', $deps = array(), $ver = false, $footer = false ) {
+	$GLOBALS['wp']['scripts'][ $handle ] = array( 'src' => $src, 'deps' => $deps, 'ver' => $ver );
+}
+function wp_add_inline_script( $handle, $code, $position = 'after' ) {
+	$GLOBALS['wp']['inline'][ $handle ] = $code;
 	return true;
 }
 
@@ -312,6 +346,66 @@ function rest_update_fields( $id, $raw, $type = 'post' ) {
 function read_fields( $id, $type = 'post', $ask = true ) {
 	$object = 'post' === $type || 'page' === $type || 'product' === $type ? array( 'id' => $id ) : array( 'id' => $id, 'taxonomy' => $type );
 	return call_user_func( $GLOBALS['wp']['fields'][ $type ]['mkt_fields']['get_callback'], $object, 'mkt_fields', new WP_REST_Request( $ask ? array( 'mkt_fields' => '1' ) : array() ) );
+}
+
+/** WordPress's flow for an mkt_elementor write: validate + sanitize the argument, save the post, then update_callback. */
+function rest_update_elementor( $id, $raw, $type = 'page' ) {
+	$field = $GLOBALS['wp']['fields'][ $type ]['mkt_elementor'];
+	$args  = $field['schema']['arg_options'];
+	$valid = call_user_func( $args['validate_callback'], $raw, new WP_REST_Request( array( 'id' => $id, 'mkt_elementor' => $raw ) ), 'mkt_elementor' );
+	if ( is_wp_error( $valid ) ) {
+		return $valid;
+	}
+	$clean = call_user_func( $args['sanitize_callback'], $raw );
+	return call_user_func( $field['update_callback'], $clean, (object) array( 'ID' => $id ) );
+}
+
+/** Read mkt_elementor as the extension does (?mkt_elementor=1), or as any other client does (no parameter). */
+function read_elementor( $id, $type = 'page', $ask = true ) {
+	return call_user_func( $GLOBALS['wp']['fields'][ $type ]['mkt_elementor']['get_callback'], array( 'id' => $id ), 'mkt_elementor', new WP_REST_Request( $ask ? array( 'mkt_elementor' => '1' ) : array() ) );
+}
+
+/** A section > column > heading + inner section > column > text editor layout, as Elementor stores it (JSON text). */
+function elementor_layout_json() {
+	return json_encode(
+		array(
+			array(
+				'id'       => 'sec1',
+				'elType'   => 'section',
+				'isInner'  => false,
+				'settings' => array(),
+				'elements' => array(
+					array(
+						'id'       => 'col1',
+						'elType'   => 'column',
+						'settings' => array( '_column_size' => 100 ),
+						'elements' => array(
+							array( 'id' => 'h1', 'elType' => 'widget', 'widgetType' => 'heading', 'settings' => array( 'title' => 'Old title' ), 'elements' => array() ),
+							array(
+								'id'       => 'in1',
+								'elType'   => 'section',
+								'isInner'  => true,
+								'settings' => array(),
+								'elements' => array(
+									array(
+										'id'       => 'col2',
+										'elType'   => 'column',
+										'settings' => array(),
+										'elements' => array( array( 'id' => 't1', 'elType' => 'widget', 'widgetType' => 'text-editor', 'settings' => array( 'editor' => '<p>Body</p>' ), 'elements' => array() ) ),
+									),
+								),
+							),
+						),
+					),
+				),
+			),
+		)
+	);
+}
+
+function wp_rand_id() {
+	static $n = 0;
+	return ++$n;
 }
 
 /**
@@ -558,7 +652,7 @@ switch ( $scenario ) {
 		foreach ( array( 'attachment', 'nav_menu', 'post_format', 'wp_pattern_category' ) as $type ) {
 			check( ! isset( $GLOBALS['wp']['fields'][ $type ] ), "no field on internal $type" );
 		}
-		check( array( '1.4.0' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
+		check( array( '1.5.0' ) === field( 'product_cat' )['schema']['properties']['version']['enum'], 'term schema reports version' );
 		check( array( 'show_ui' => true, 'show_in_rest' => true ) === $GLOBALS['wp']['taxonomy_query'], 'taxonomies chosen by show_ui + show_in_rest, not public (tags can be non-public)' );
 		// A product update is saved early, like posts.
 		check( true === rest_update( 9329, array( 'title' => 'Product SEO' ), 'product' ), 'product update ok' );
@@ -639,7 +733,7 @@ switch ( $scenario ) {
 		boot_rest();
 		$schema = field()['schema'];
 		check( array( 'none' ) === $schema['properties']['plugin']['enum'], 'advertises plugin none' );
-		check( array( '1.4.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
+		check( array( '1.5.0' ) === $schema['properties']['version']['enum'], 'advertises version' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 5 ) );
 		check( 'none' === $value['plugin'] && '' === $value['title'], 'get works without an SEO plugin' );
 		check( true === rest_update( 5, array( 'title' => 'T' ) ), 'update is a harmless no-op' );
@@ -666,7 +760,7 @@ switch ( $scenario ) {
 		call_user_func( $cb, array( 'title' => 'Fresh' ), (object) array( 'ID' => 8 ) );
 		check( 'Fresh' === $GLOBALS['wp']['meta'][8]['_yoast_wpseo_title'], 'new post saved by update_callback' );
 		$value = call_user_func( field()['get_callback'], array( 'id' => 7 ) );
-		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.4.0' === $value['version'], 'read back' );
+		check( 'New title' === $value['title'] && 'yoast' === $value['plugin'] && '1.5.0' === $value['version'], 'read back' );
 		break;
 
 	case 'rank-math-with-hostile-autoloader':
@@ -779,11 +873,11 @@ switch ( $scenario ) {
 		require $plugin;
 		boot_rest();
 		$schema = $GLOBALS['wp']['fields']['page']['mkt_fields']['schema'];
-		check( array( 'acf' ) === $schema['properties']['source']['enum'] && array( '1.4.0' ) === $schema['properties']['version']['enum'], 'schema advertises ACF and the bridge version' );
+		check( array( 'acf' ) === $schema['properties']['source']['enum'] && array( '1.5.0' ) === $schema['properties']['version']['enum'], 'schema advertises ACF and the bridge version' );
 		check( null === read_fields( 2549, 'page', false ), 'not computed for requests that do not ask for it (editor, other clients)' );
 		$f      = read_fields( 2549, 'page' );
 		$screen = end( $GLOBALS['acf']['screens'] );
-		check( 'acf' === $f['source'] && '6.3.5' === $f['acf_version'] && '1.4.0' === $f['version'], 'source and versions' );
+		check( 'acf' === $f['source'] && '6.3.5' === $f['acf_version'] && '1.5.0' === $f['version'], 'source and versions' );
 		check( 2549 === $screen['post_id'] && 'page' === $screen['post_type'], "ACF's location rules get the post and its type" );
 		$fields = $f['fields'];
 		check( 'Steel Buildings Virginia' === $fields['hero_title']['value'] && 'text' === $fields['hero_title']['type'] && true === $fields['hero_title']['writable'], 'simple field' );
@@ -954,6 +1048,246 @@ switch ( $scenario ) {
 		$html = ob_get_clean();
 		check( false !== strpos( $html, 'mkt_fields_save_meta_keys' ) && false !== strpos( $html, "city_intro\nstate_intro" ), 'form shows the saved keys' );
 		check( false !== strpos( $html, 'Advanced Custom Fields is not active' ), 'ACF status shown' );
+		break;
+
+	case 'elementor-read':
+		require __DIR__ . '/elementor-stubs.php';
+		require $plugin;
+		boot_rest();
+		$field = $GLOBALS['wp']['fields']['page']['mkt_elementor'];
+		check( array( 'elementor' ) === $field['schema']['properties']['source']['enum'] && array( '1.5.0' ) === $field['schema']['properties']['version']['enum'], 'schema advertises Elementor and the bridge version' );
+		check( isset( $GLOBALS['wp']['fields']['post']['mkt_elementor'] ), 'on posts too' );
+		$GLOBALS['wp']['meta'][10] = array(
+			'_elementor_edit_mode'     => 'builder',
+			'_elementor_data'          => elementor_layout_json(),
+			'_elementor_page_settings' => array( 'background_color' => '#fff' ),
+			'_wp_page_template'        => 'elementor_canvas',
+		);
+		$read = read_elementor( 10 );
+		check( 'elementor' === $read['source'] && '3.25.0' === $read['elementor_version'] && true === $read['built_with_elementor'] && true === $read['editable'], 'state' );
+		check( json_decode( elementor_layout_json(), true ) === $read['elements'], 'elements decoded from the stored JSON' );
+		check( array( 'background_color' => '#fff' ) === $read['page_settings'] && 'elementor_canvas' === $read['template'], 'settings and template' );
+		check( in_array( 'heading', $read['widget_types'], true ) && '' === $read['locked_by'] && ! isset( $read['unreadable'] ), 'widgets, no lock' );
+		check( null === read_elementor( 10, 'page', false ), 'only computed when asked for (?mkt_elementor=1)' );
+		$empty = read_elementor( 11 );
+		check( array() === $empty['elements'] && false === $empty['built_with_elementor'] && '{}' === json_encode( $empty['page_settings'] ), 'a page without a layout' );
+		$GLOBALS['wp']['meta'][12]['_elementor_data'] = '{broken';
+		check( true === read_elementor( 12 )['unreadable'], 'unreadable JSON is reported, not thrown' );
+		$GLOBALS['wp']['meta'][13]['_elementor_data'] = array( array( 'id' => 'old' ) );
+		check( 'old' === read_elementor( 13 )['elements'][0]['id'], 'very old Elementor stored arrays' );
+		$GLOBALS['elementor']['widgets_throw'] = true;
+		check( null === read_elementor( 10 )['widget_types'], 'a broken widget registry gives null, not an error' );
+		$GLOBALS['elementor']['widgets_throw'] = false;
+		// Post lock: another user in the editor within the last 150 seconds.
+		$GLOBALS['wp']['users'][7]               = 'Priya';
+		$GLOBALS['wp']['meta'][10]['_edit_lock'] = ( time() - 10 ) . ':7';
+		check( 'Priya' === read_elementor( 10 )['locked_by'], 'locked by another user' );
+		$GLOBALS['wp']['meta'][10]['_edit_lock'] = ( time() - 10 ) . ':1';
+		check( '' === read_elementor( 10 )['locked_by'], 'own lock does not count' );
+		$GLOBALS['wp']['meta'][10]['_edit_lock'] = ( time() - 1000 ) . ':7';
+		check( '' === read_elementor( 10 )['locked_by'], 'expired lock' );
+		$GLOBALS['wp']['can_edit'] = false;
+		check( null === read_elementor( 10 ), 'hidden from users who cannot edit' );
+		$GLOBALS['wp']['can_edit']    = true;
+		$GLOBALS['wp']['meta_throws'] = true;
+		check( null === read_elementor( 10 ), 'errors never break the response' );
+		break;
+
+	case 'elementor-write':
+		require __DIR__ . '/elementor-stubs.php';
+		require $plugin;
+		boot_rest();
+		$GLOBALS['wp']['post_type_of'][10] = 'page';
+		$GLOBALS['wp']['meta'][10]         = array( '_elementor_edit_mode' => 'builder', '_elementor_data' => elementor_layout_json() );
+		$layout                            = json_decode( elementor_layout_json(), true );
+		$layout[0]['elements'][0]['elements'][0]['settings']['title'] = 'New \\u002d title';
+		$layout[0]['isInner']                                          = true; // Wrong; the bridge corrects it.
+		$layout[0]['defaultEditSettings']                              = array( 'defaultEditRoute' => 'content' ); // Unknown keys are kept.
+		check( true === rest_update_elementor( 10, array( 'elements' => $layout, 'source' => 'elementor', 'version' => '1.0' ) ), 'saved' );
+		$save = $GLOBALS['elementor']['saves'][0];
+		check( 10 === $save[0] && ! isset( $save[1]['settings'] ), 'saved through Elementor, layout only' );
+		check( false === $save[1]['elements'][0]['isInner'] && true === $save[1]['elements'][0]['elements'][0]['elements'][1]['isInner'], 'isInner set as Elementor expects' );
+		check( array( 'defaultEditRoute' => 'content' ) === $save[1]['elements'][0]['defaultEditSettings'], 'unknown keys kept' );
+		$stored = json_decode( $GLOBALS['wp']['meta'][10]['_elementor_data'], true );
+		check( 'New \\u002d title' === $stored[0]['elements'][0]['elements'][0]['settings']['title'], 'backslashes survive the save' );
+		check( 'builder' === $GLOBALS['wp']['meta'][10]['_elementor_edit_mode'], 'still built with Elementor' );
+		// Page settings: Elementor's own templates and the theme's page templates.
+		check( true === rest_update_elementor( 10, array( 'page_settings' => array( 'template' => 'templates/landing.php', 'hide_title' => 'yes' ) ) ), 'theme template' );
+		check( 'templates/landing.php' === $GLOBALS['wp']['meta'][10]['_wp_page_template'] && ! isset( $GLOBALS['elementor']['saves'][1][1]['elements'] ), 'settings only' );
+		check( is_wp_error( rest_update_elementor( 10, array( 'page_settings' => array( 'template' => '../wp-config.php' ) ) ) ), 'unknown template refused' );
+		// A page that is not built with Elementor needs convert.
+		$GLOBALS['wp']['post_type_of'][20] = 'page';
+		$GLOBALS['wp']['meta'][20]         = array();
+		$fresh                             = array( array( 'id' => 'c1', 'elType' => 'container', 'elements' => array( array( 'id' => 'w1', 'elType' => 'widget', 'widgetType' => 'heading', 'settings' => array( 'title' => 'Hi' ) ) ) ) );
+		$refused                           = rest_update_elementor( 20, array( 'elements' => $fresh ) );
+		check( is_wp_error( $refused ) && false !== strpos( $refused->message, 'convert: true' ), 'convert required' );
+		check( true === rest_update_elementor( 20, array( 'elements' => $fresh, 'convert' => true ) ), 'converted' );
+		check( 'builder' === $GLOBALS['wp']['meta'][20]['_elementor_edit_mode'], 'now built with Elementor' );
+		check( array() === $GLOBALS['elementor']['saves'][2][1]['elements'][0]['settings'] && array() === $GLOBALS['elementor']['saves'][2][1]['elements'][0]['elements'][0]['elements'], 'missing settings and children filled in' );
+		// Accounts without unfiltered_html: text is filtered and the HTML widget is refused.
+		$GLOBALS['wp']['unfiltered_html'] = false;
+		$unsafe                           = $fresh;
+		$unsafe[0]['elements'][0]['settings']['title'] = 'Hi<script>alert(1)</script>';
+		check( true === rest_update_elementor( 20, array( 'elements' => $unsafe ) ), 'filtered save' );
+		check( 'Hi' === end( $GLOBALS['elementor']['saves'] )[1]['elements'][0]['elements'][0]['settings']['title'], 'script removed' );
+		$html                                         = $fresh;
+		$html[0]['elements'][0]['widgetType']         = 'html';
+		check( is_wp_error( rest_update_elementor( 20, array( 'elements' => $html ) ) ), 'HTML widget refused' );
+		// Only read-only parts, or null: nothing to do.
+		$count = count( $GLOBALS['elementor']['saves'] );
+		check( true === rest_update_elementor( 20, array( 'source' => 'elementor', 'version' => '1.5.0' ) ) && true === rest_update_elementor( 20, null ), 'read-only parts ignored' );
+		check( count( $GLOBALS['elementor']['saves'] ) === $count, 'nothing saved' );
+		break;
+
+	case 'elementor-refusals':
+		require __DIR__ . '/elementor-stubs.php';
+		require $plugin;
+		boot_rest();
+		$GLOBALS['wp']['meta'][10] = array( '_elementor_edit_mode' => 'builder', '_elementor_data' => elementor_layout_json() );
+		$w                         = function ( $type, $widget = 'heading', $extra = array() ) {
+			return array( 'id' => 'x' . wp_rand_id(), 'elType' => $type, 'widgetType' => $widget ) + $extra;
+		};
+		$cases                     = array(
+			'unregistered widget'     => array( array( 'id' => 's', 'elType' => 'section', 'elements' => array( array( 'id' => 'c', 'elType' => 'column', 'elements' => array( $w( 'widget', 'slider-pro' ) ) ) ) ) ),
+			'widget at the top'       => array( $w( 'widget' ) ),
+			'column at the top'       => array( array( 'id' => 'c', 'elType' => 'column' ) ),
+			'column in container'     => array( array( 'id' => 'k', 'elType' => 'container', 'elements' => array( array( 'id' => 'c', 'elType' => 'column' ) ) ) ),
+			'widget in section'       => array( array( 'id' => 's', 'elType' => 'section', 'elements' => array( $w( 'widget' ) ) ) ),
+			'inner section too deep'  => array( array( 'id' => 's', 'elType' => 'section', 'elements' => array( array( 'id' => 'c', 'elType' => 'column', 'elements' => array( array( 'id' => 's2', 'elType' => 'section', 'elements' => array( array( 'id' => 'c2', 'elType' => 'column', 'elements' => array( array( 'id' => 's3', 'elType' => 'section' ) ) ) ) ) ) ) ) ) ),
+			'duplicate id'            => array( array( 'id' => 'a', 'elType' => 'container' ), array( 'id' => 'a', 'elType' => 'container' ) ),
+			'bad id'                  => array( array( 'id' => 'a b', 'elType' => 'container' ) ),
+			'missing id'              => array( array( 'elType' => 'container' ) ),
+			'bad elType'              => array( array( 'id' => 'a', 'elType' => 'Section!' ) ),
+			'settings list'           => array( array( 'id' => 'a', 'elType' => 'container', 'settings' => array( 'x' ) ) ),
+			'widget with children'    => array( array( 'id' => 'k', 'elType' => 'container', 'elements' => array( $w( 'widget', 'heading', array( 'elements' => array( $w( 'widget' ) ) ) ) ) ) ),
+			'not a list'              => array( 'id' => 'a', 'elType' => 'container' ),
+			'element not an object'   => array( 'text' ),
+		);
+		foreach ( $cases as $what => $elements ) {
+			check( is_wp_error( rest_update_elementor( 10, array( 'elements' => $elements ) ) ), $what );
+		}
+		check( is_wp_error( rest_update_elementor( 10, array( 'page_settings' => array( 'post_status' => 'publish' ) ) ) ), 'post_status refused' );
+		check( is_wp_error( rest_update_elementor( 10, array( 'page_settings' => array( 'x' ) ) ) ), 'page_settings list refused' );
+		$deep = array( 'id' => 'k0', 'elType' => 'container', 'elements' => array() );
+		for ( $i = 1; $i <= 31; $i++ ) {
+			$deep = array( 'id' => 'k' . $i, 'elType' => 'container', 'elements' => array( $deep ) );
+		}
+		check( is_wp_error( rest_update_elementor( 10, array( 'elements' => array( $deep ) ) ) ), 'nesting depth limited' );
+		$GLOBALS['wp']['status_of'][10] = 'trash';
+		check( is_wp_error( rest_update_elementor( 10, array( 'elements' => array() ) ) ), 'trash' );
+		$GLOBALS['wp']['status_of'][10] = 'publish';
+		$GLOBALS['wp']['meta'][30]      = array( '_et_pb_use_builder' => 'on' );
+		$divi                           = rest_update_elementor( 30, array( 'elements' => array(), 'convert' => true ) );
+		check( is_wp_error( $divi ) && false !== strpos( $divi->message, 'Divi' ), 'another builder' );
+		$GLOBALS['wp']['users'][7]               = 'Priya';
+		$GLOBALS['wp']['meta'][10]['_edit_lock'] = ( time() - 5 ) . ':7';
+		$locked                                  = rest_update_elementor( 10, array( 'elements' => array() ) );
+		check( is_wp_error( $locked ) && false !== strpos( $locked->message, 'Priya' ), 'locked' );
+		unset( $GLOBALS['wp']['meta'][10]['_edit_lock'] );
+		\Elementor\Plugin::$instance->documents->get( 10 )->editable = false;
+		check( is_wp_error( rest_update_elementor( 10, array( 'elements' => array() ) ) ), 'Elementor says not editable' );
+		\Elementor\Plugin::$instance->documents->get( 10 )->editable   = true;
+		\Elementor\Plugin::$instance->documents->get( 10 )->save_fails = true;
+		$failed = call_user_func( $GLOBALS['wp']['fields']['page']['mkt_elementor']['update_callback'], array( 'elements' => array() ), (object) array( 'ID' => 10 ) );
+		check( is_wp_error( $failed ) && 'mkt_elementor_save_failed' === $failed->code, 'save returning false is an error' );
+		\Elementor\Plugin::$instance->documents->get( 10 )->save_fails = false;
+		$GLOBALS['elementor']['save_throws'] = true;
+		$thrown = call_user_func( $GLOBALS['wp']['fields']['page']['mkt_elementor']['update_callback'], array( 'elements' => array() ), (object) array( 'ID' => 10 ) );
+		check( is_wp_error( $thrown ) && 'mkt_elementor_save_failed' === $thrown->code, 'exceptions become errors' );
+		$GLOBALS['elementor']['save_throws'] = false;
+		$GLOBALS['wp']['can_edit']           = false;
+		check( is_wp_error( call_user_func( $GLOBALS['wp']['fields']['page']['mkt_elementor']['update_callback'], array( 'elements' => array() ), (object) array( 'ID' => 10 ) ) ), 'permission' );
+		check( array() === $GLOBALS['elementor']['saves'], 'nothing was ever saved' );
+		check( elementor_layout_json() === $GLOBALS['wp']['meta'][10]['_elementor_data'], 'stored layout untouched' );
+		break;
+
+	case 'elementor-not-active':
+		require $plugin;
+		boot_rest();
+		$field = $GLOBALS['wp']['fields']['page']['mkt_elementor'];
+		check( array( 'none' ) === $field['schema']['properties']['source']['enum'], 'advertises none' );
+		$refused = rest_update_elementor( 10, array( 'elements' => array() ) );
+		check( is_wp_error( $refused ) && false !== strpos( $refused->message, 'Elementor 3.0.0 or later is not active' ), 'refused clearly' );
+		$read = read_elementor( 10 );
+		check( 'none' === $read['source'] && false === $read['editable'] && null === $read['widget_types'], 'read works without Elementor' );
+		break;
+
+	case 'editor-queue':
+		require $plugin;
+		boot_rest();
+		$routes = $GLOBALS['wp']['routes'];
+		$base   = 'mkt-seo-bridge/v1/editor-queue/(?P<id>\d+)';
+		check( isset( $routes[ $base ], $routes[ $base . '/(?P<item>[a-f0-9]{16})' ] ), 'routes registered' );
+		check( 'GET' === $routes[ $base ][0]['methods'] && 'POST' === $routes[ $base ][1]['methods'], 'list and add' );
+		foreach ( array( $routes[ $base ][0], $routes[ $base ][1], $routes[ $base . '/(?P<item>[a-f0-9]{16})' ] ) as $route ) {
+			check( array( 'MKT_SEO_Bridge', 'queue_permission' ) === $route['permission_callback'], 'every route checks permission' );
+		}
+		$GLOBALS['wp']['post_type_of'][5]  = 'page';
+		$GLOBALS['wp']['post_type_of'][77] = 'attachment';
+		check( true === MKT_SEO_Bridge::queue_permission( new WP_REST_Request( array( 'id' => 5 ) ) ), 'editors of the page' );
+		check( is_wp_error( MKT_SEO_Bridge::queue_permission( new WP_REST_Request( array( 'id' => 77 ) ) ) ), 'not attachments' );
+		$GLOBALS['wp']['can_edit'] = false;
+		check( is_wp_error( MKT_SEO_Bridge::queue_permission( new WP_REST_Request( array( 'id' => 5 ) ) ) ), 'not without edit permission' );
+		$GLOBALS['wp']['can_edit'] = true;
+		$content                   = '<!-- wp:heading {"content":"a -- b"} --><h2>a -- b</h2><!-- /wp:heading -->';
+		$added                     = MKT_SEO_Bridge::queue_add( new WP_REST_Request( array( 'id' => 5, 'content' => $content, 'base_modified_gmt' => '2026-10-20T10:00:00', 'label' => '<b>County</b> wording', 'summary' => array( array( 'before' => str_repeat( 'x', 400 ), 'after' => 'y' ), 'junk' ) ) ) );
+		check( is_array( $added ) && 1 === preg_match( '/^[a-f0-9]{16}$/', $added['id'] ) && 'pending' === $added['status'], 'queued' );
+		check( 'County wording' === $added['label'] && ! isset( $added['content'] ) && hash( 'sha256', $content ) === $added['content_sha256'], 'label cleaned, content not echoed' );
+		check( 1 === count( $added['summary'] ) && 300 === strlen( $added['summary'][0]['before'] ), 'summary clipped' );
+		$listed = MKT_SEO_Bridge::queue_list( new WP_REST_Request( array( 'id' => 5, 'content' => '1' ) ) );
+		check( '1.5.0' === $listed['version'] && $content === $listed['items'][0]['content'], 'content survives storage byte for byte (backslashes included)' );
+		check( ! isset( MKT_SEO_Bridge::queue_list( new WP_REST_Request( array( 'id' => 5 ) ) )['items'][0]['content'] ), 'content only on request' );
+		foreach ( array( array( 'content' => '' ), array( 'content' => 'x', 'base_modified_gmt' => 'yesterday' ), array( 'content' => str_repeat( 'x', 2097153 ), 'base_modified_gmt' => '2026-10-20T10:00:00' ) ) as $bad ) {
+			check( is_wp_error( MKT_SEO_Bridge::queue_add( new WP_REST_Request( array( 'id' => 5 ) + $bad ) ) ), 'bad input refused' );
+		}
+		$set = function ( $id, $status ) {
+			return MKT_SEO_Bridge::queue_set_status( new WP_REST_Request( array( 'id' => 5, 'item' => $id, 'status' => $status ) ) );
+		};
+		check( 'applied' === $set( $added['id'], 'applied' )['status'], 'applied' );
+		check( 'applied' === $set( $added['id'], 'dismissed' )['status'], 'finished items stay as they are' );
+		check( is_wp_error( $set( $added['id'], 'pending' ) ), 'only applied or dismissed' );
+		check( is_wp_error( $set( 'ffffffffffffffff', 'dismissed' ) ), 'unknown item' );
+		// At most 20 pending; finished ones are dropped first when the list is full.
+		for ( $i = 0; $i < 20; $i++ ) {
+			$last = MKT_SEO_Bridge::queue_add( new WP_REST_Request( array( 'id' => 5, 'content' => 'c' . $i, 'base_modified_gmt' => '2026-10-20T10:00:00' ) ) );
+			check( is_array( $last ), 'pending ' . $i );
+		}
+		check( is_wp_error( MKT_SEO_Bridge::queue_add( new WP_REST_Request( array( 'id' => 5, 'content' => 'too many', 'base_modified_gmt' => '2026-10-20T10:00:00' ) ) ) ), '21st pending refused' );
+		$stored = $GLOBALS['wp']['meta'][5]['_mkt_editor_queue'];
+		check( 20 === count( $stored ) && 'c0' === $stored[0]['content'], 'the applied item made room' );
+		// Old items expire after 14 days.
+		$GLOBALS['wp']['meta'][6]['_mkt_editor_queue'] = array( array( 'id' => 'aaaaaaaaaaaaaaaa', 'status' => 'pending', 'created' => time() - 15 * 86400, 'content' => 'old' ), 'garbage' );
+		check( array() === MKT_SEO_Bridge::queue_list( new WP_REST_Request( array( 'id' => 6 ) ) )['items'], 'expired and malformed items ignored' );
+		// Accounts without unfiltered_html: content filtered like post content.
+		$GLOBALS['wp']['unfiltered_html'] = false;
+		$filtered                         = MKT_SEO_Bridge::queue_add( new WP_REST_Request( array( 'id' => 6, 'content' => '<p>a</p><script>x</script>', 'base_modified_gmt' => '2026-10-20T10:00:00' ) ) );
+		check( '<p>a</p>' === MKT_SEO_Bridge::queue_list( new WP_REST_Request( array( 'id' => 6, 'content' => 'true' ) ) )['items'][0]['content'], 'filtered' );
+		$GLOBALS['wp']['meta_throws'] = true;
+		check( is_wp_error( MKT_SEO_Bridge::queue_list( new WP_REST_Request( array( 'id' => 5 ) ) ) ), 'storage errors become REST errors' );
+		check( is_wp_error( MKT_SEO_Bridge::queue_add( new WP_REST_Request( array( 'id' => 5, 'content' => 'x', 'base_modified_gmt' => '2026-10-20T10:00:00' ) ) ) ), 'add too' );
+		break;
+
+	case 'editor-queue-script':
+		require $plugin;
+		check( isset( $GLOBALS['wp']['actions']['enqueue_block_editor_assets'] ), 'hooked into the block editor' );
+		$GLOBALS['wp']['screen'] = (object) array( 'base' => 'post', 'post_type' => 'page' );
+		do_action( 'enqueue_block_editor_assets' );
+		$script = $GLOBALS['wp']['scripts']['mkt-editor-queue'] ?? null;
+		check( $script && false !== strpos( $script['src'], 'assets/editor-queue.js' ) && '1.5.0' === $script['ver'], 'script enqueued' );
+		check( array( 'wp-api-fetch', 'wp-blocks', 'wp-data', 'wp-editor', 'wp-notices' ) === $script['deps'], 'dependencies' );
+		check( false !== strpos( $GLOBALS['wp']['inline']['mkt-editor-queue'], '"route":"\/mkt-seo-bridge\/v1\/editor-queue\/"' ), 'route passed to the script' );
+		check( is_file( dirname( $plugin ) . '/assets/editor-queue.js' ), 'script file ships with the plugin' );
+		foreach ( array( (object) array( 'base' => 'site-editor', 'post_type' => '' ), (object) array( 'base' => 'post', 'post_type' => 'wp_block' ) ) as $screen ) {
+			$GLOBALS['wp']['scripts'] = array();
+			$GLOBALS['wp']['screen']  = $screen;
+			do_action( 'enqueue_block_editor_assets' );
+			check( empty( $GLOBALS['wp']['scripts'] ), 'not on ' . $screen->base . ' ' . $screen->post_type );
+		}
+		$GLOBALS['wp']['scripts']  = array();
+		$GLOBALS['wp']['screen']   = (object) array( 'base' => 'post', 'post_type' => 'post' );
+		$GLOBALS['wp']['can_edit'] = false;
+		do_action( 'enqueue_block_editor_assets' );
+		check( empty( $GLOBALS['wp']['scripts'] ), 'not for accounts that cannot edit' );
 		break;
 
 	default:
